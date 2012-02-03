@@ -1,0 +1,10 @@
+undup - compress files by consolidating duplicate data
+
+undup tries to compress an input stream by watching for blocks that have
+previously appeared.  It replaces the duplicated data with a backreference.
+Integrity is ensured by validating a SHA256 across the entire stream at
+reconstruction time.
+
+USAGE
+
+tar cf - dir | undup | xz > dir.tar.undup.xz
