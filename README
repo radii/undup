@@ -8,3 +8,4 @@ reconstruction time.
 USAGE
 
 tar cf - dir | undup | xz > dir.tar.undup.xz
+unxz dir.tar.undup.xz | undup -d -o dir.tar; tar xf dir.tar
