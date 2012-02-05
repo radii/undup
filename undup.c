@@ -237,21 +237,6 @@ struct undup_funcs undfuncs[] = {
     [OP_TRAILER] = { und_trailer_finalize },
 };
 
-struct undup *new_undup_stream(int fd)
-{
-    struct undup *und = calloc(sizeof *und, 1);
-
-    if (!und) return NULL;
-
-    und->fd = fd;
-    SHA256_Init(&und->streamctx);
-    und->bakstart = -1;
-
-    und_header(und);
-
-    return und;
-}
-
 void und_header(struct undup *und)
 {
     int r;
@@ -266,6 +251,21 @@ void und_header(struct undup *und)
         die("write: %s\n", strerror(errno));
     if (r != sizeof(hd))
         die("short write on header: wrote %d of %d\n", r, (int)sizeof(hd));
+}
+
+struct undup *new_undup_stream(int fd)
+{
+    struct undup *und = calloc(sizeof *und, 1);
+
+    if (!und) return NULL;
+
+    und->fd = fd;
+    SHA256_Init(&und->streamctx);
+    und->bakstart = -1;
+
+    und_header(und);
+
+    return und;
 }
 
 void und_trailer(struct undup *und)
