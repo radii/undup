@@ -294,10 +294,18 @@ void und_trailer_finalize(struct undup *und)
     die("Botch: und_trailer_finalize called.\n");
 }
 
+void und_finalize(struct undup *und)
+{
+    if (undfuncs[und->curop].finalize) {
+        undfuncs[und->curop].finalize(und);
+    }
+}
+
 void und_flush_frame(struct undup *);
 
 void und_flush(struct undup *und)
 {
+    und_finalize(und);
     und_flush_frame(und);
 }
 
@@ -336,7 +344,8 @@ void und_flush_frame(struct undup *und)
     for (i = und->cellidx; i < NUMCELL; i++)
         und->cells[i][0] = OP_DATA;
 
-    memcpy(iov + 1, und->iov, und->iovidx);
+    for (i=0; i<und->iovidx + 1; i++)
+        iov[i+1] = und->iov[i];
     iov[0].iov_base = und->cells;
     iov[0].iov_len = BLOCKSZ;
     numiov = und->iovidx + 1;
@@ -387,9 +396,8 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
     if (und->curop == opcode)
         return;
 
-    if (undfuncs[und->curop].finalize) {
-        undfuncs[und->curop].finalize(und);
-    }
+    und_finalize(und);
+
     und->curop = opcode;
 
     SHA256_Init(&und->blockctx);
@@ -415,6 +423,8 @@ void und_backref_finalize(struct undup *und)
 {
     struct backref_cell br;
     u8 sha[HASHSZ];
+
+    debug("BACK finalize start %lld\n", und->bakstart);
 
     br.pos = htonll(und->bakstart);
     if (br.op != 0)
@@ -442,6 +452,7 @@ void und_data_cell(struct undup *und, char *buf, int len)
     n = und->iov[i].iov_len;
     p = realloc(und->iov[i].iov_base, n + len);
     memcpy((u8 *)p + n, buf, len);
+    und->iov[i].iov_base = p;
     und->iov[i].iov_len = n + len;
 }
 
