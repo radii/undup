@@ -355,7 +355,9 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
     if (und->curop == opcode)
         return;
 
-    undfuncs[und->curop].finalize(und);
+    if (undfuncs[und->curop].finalize) {
+        undfuncs[und->curop].finalize(und);
+    }
     und->curop = opcode;
 
     SHA256_Init(&und->blockctx);
