@@ -135,25 +135,9 @@ fail:
     return NULL;
 }
 
-off_t lookup(struct hashtable *t, u8 *sha)
+void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
 {
-    unsigned int idx = *(unsigned int *)sha % t->n;
     struct hashentry *e;
-
-    for (e = t->e[idx]; e; e = e->next) {
-        if (!memcmp(e->hash, sha, HASHSZ))
-            return e->off;
-    }
-    return -1;
-}
-
-void insert(struct hashtable *t, off_t off, u8 *sha)
-{
-    unsigned int idx = *(unsigned int *)sha % t->n;
-    struct hashentry *e;
-
-    if (lookup(t, sha) != (off_t)-1)
-        return;
 
     e = malloc(sizeof *e);
     if (!e) {
@@ -165,6 +149,24 @@ void insert(struct hashtable *t, off_t off, u8 *sha)
     memcpy(e->hash, sha, HASHSZ);
     e->next = t->e[idx];
     t->e[idx] = e;
+
+    debug("insert idx %d off %llx hash %02c%02c%02c%02c e %p next %p\n",
+          idx, off, sha[0], sha[1], sha[2], sha[3], e, e->next);
+}
+
+off_t lookup_insert(struct hashtable *t, u8 *sha, off_t newoff)
+{
+    unsigned int idx = *(unsigned int *)sha % t->n;
+    struct hashentry *e;
+
+    debug("lookup idx %d e %p\n", idx, t->e[idx]);
+
+    for (e = t->e[idx]; e; e = e->next) {
+        if (!memcmp(e->hash, sha, HASHSZ))
+            return e->off;
+    }
+    insert(t, idx, newoff, sha);
+    return -1;
 }
 
 #define CELLSZ 16
@@ -530,7 +532,7 @@ int main(int argc, char **argv)
         off_t oldoff;
 
         hash(buf, n, sha);
-        oldoff = lookup(table, sha);
+        oldoff = lookup_insert(table, sha, und->logoff);
 
         debug("%8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
               und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
