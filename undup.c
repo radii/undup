@@ -71,17 +71,21 @@ void debug(char *fmt, ...)
     va_end(ap);
 }
 
+/* what a crock. */
 u64 htonll(u64 x)
 {
-    return
-        (x & 0xffULL) << 56 |
-        (x & 0xff00ULL) << 40 |
-        (x & 0xff0000ULL) << 24 |
-        (x & 0xff000000ULL) << 8 |
-        (x & 0xff00000000ULL) >> 8 |
-        (x & 0xff0000000000ULL) >> 24 |
-        (x & 0xff000000000000ULL) >> 40 |
-        (x & 0xff00000000000000ULL) >> 56;
+    u64 ret;
+    u8 *buf = (u8 *)&ret;
+
+    buf[0] = x >> 56;
+    buf[1] = x >> 48;
+    buf[2] = x >> 40;
+    buf[3] = x >> 32;
+    buf[4] = x >> 24;
+    buf[5] = x >> 16;
+    buf[6] = x >> 8;
+    buf[7] = x;
+    return ret;
 }
 
 void usage(const char *cmd)
