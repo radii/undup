@@ -129,7 +129,7 @@ fail:
     return NULL;
 }
 
-off_t lookup(struct hashtable *t, char *sha)
+off_t lookup(struct hashtable *t, u8 *sha)
 {
     unsigned int idx = *(unsigned int *)sha % t->n;
     struct hashentry *e;
@@ -141,7 +141,7 @@ off_t lookup(struct hashtable *t, char *sha)
     return -1;
 }
 
-void insert(struct hashtable *t, off_t off, char *sha)
+void insert(struct hashtable *t, off_t off, u8 *sha)
 {
     unsigned int idx = *(unsigned int *)sha % t->n;
     struct hashentry *e;
@@ -358,7 +358,7 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
 }
 
 void und_backref_cell(struct undup *und, off_t oldoff,
-                      char *buf, int len, char *sha)
+                      char *buf, int len, u8 *sha)
 {
     und_prep(und, OP_BACKREF, buf, len);
 
@@ -470,7 +470,7 @@ int main(int argc, char **argv)
     if (!und) die("new_undup_stream: %s\n", strerror(errno));
 
     while ((n = read(infd, buf, bufsz)) > 0) {
-        char sha[HASHSZ];
+        u8 sha[HASHSZ];
         off_t oldoff;
 
         hash(buf, n, sha);
