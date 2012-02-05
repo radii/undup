@@ -9,14 +9,14 @@ OVERVIEW
 --------
 
 Undup transforms an input file, consisting of a sequence of bytes arranged
-into 4096-byte blocks, into a undup stream consisting of data blocks
+into 512-byte blocks, into a undup stream consisting of data blocks
 interleaved with metadata blocks.  Backrefs in the metadata can refer to
 previous offsets in the stream, thereby allowing a stream with repetitive
 content (such as an uncompressed tar archive containing many slightly
 different copies of a source tree) to be represented without storing the
 repeated data multiple times in the undup stream.
 
-The deduplication step ideally uses a significant amount of RAM, on the order
+This compression phase ideally uses a significant amount of RAM, on the order
 of 8% of the input stream size, but can be bounded (with some loss of
 efficiency) to any chosen RAM footprint.  The input to the compression phase
 can be a stream or a seekable file; the output can be a stream or a seekable
@@ -24,28 +24,28 @@ file.  The expansion phase requires that one of the input or the output must
 be seekable.
 
 The unduplication algorithm uses SHA256 to find duplicate blocks.  If two
-blocks with different content generate the same SHA256, the undup stream will
-silently lose data during the compression phase.  If this happens, the
-expansion phase will fail to validate the final, full-stream SHA256 and will
-noisily warn that this has happened.  If two blocks generate the same SHA256
-*and* result in the same transformation in the SHA256 state, then silent data
-loss will occur because the output stream will contain one of the blocks
-twice.  This is considered unlikely.
+blocks A and A' with different content generate the same SHA256, the undup
+stream will silently lose data during the compression phase.  If this happens,
+the expansion phase will fail to validate the final, full-stream SHA256 and
+will noisily warn that this has happened.  If A and A' also result in the same
+transformation in the full-stream SHA256 state, then silent data loss will
+occur because the output stream will contain A everywhere it should contain
+A'.  This is considered unlikely.
 
 An undup stream consists of a header, followed by zero or more frames,
 followed by a special frame known as a trailer.
 
-All values are stored little endian, naturally aligned.  All data and metadata
-blocks are multiples of 4096 bytes.
+All values are stored big endian, naturally aligned.  All data and metadata
+blocks are multiples of 512 bytes.
 
 Undup uses SHA256 in many places.  The SHA256 is sometimes truncated from its
-full 32 bytes down to 28, 24, or 20 bytes.  Truncation is performed by
-discarding the trailing bytes of the SHA256.
+full 32 bytes down to 12 bytes.  Truncation is performed by discarding the
+trailing bytes of the SHA256.
 
 HEADER
 ------
 
-The header is 4096 bytes.  It starts with the following structure and is
+The header is 512 bytes.  It starts with the following structure and is
 padded with bytes of value 0x00.
 
  Magic         Version
@@ -56,36 +56,39 @@ padded with bytes of value 0x00.
 TRAILER
 -------
 
-The trailer is 4096 bytes.  It starts with the following structure and is
+The trailer is 512 bytes.  It starts with the following structure and is
 padded with bytes of value 0x00.
 
-Op     Length     Hash
+  Op   Length     Hash
   0    1 ..  7
 +----+---------+------------------+
 | ff | 8 bytes | SHA256, 32 bytes |
 +----+---------+------------------+
 
 The Length field denotes the total length, in bytes, of the input data stream.
+The maximum length of a stream is 2^56-1 = 64 petabytes (minus one).
+
 The Hash field gives the SHA256 of the input data stream.
 
 FRAME
 -----
 
-A frame consists of a metadata block, followed by zero or more data blocks.
+A frame consists of a metadata block, followed by zero or more data blocks as
+described in the metadata block.
 
-A metadata block consists of 128 cells.
+A metadata block consists of 32 cells of 16 bytes each.
 
 CELL
 ----
 
-A cell is 32 bytes long.  All cells start with a one-byte opcode.  The format
+A cell is 16 bytes long.  All cells start with a one-byte opcode.  The format
 of the rest of the cell depends on the opcode.
 
 DATA CELL
 ---------
 
   Op   Len        Hash
-  0    1  2  3    4 ...        31
+  0    1  2  3    4 ...        16
 +----+----------+-----------------+
 | 01 | xx yy zz | hh hh hh ... hh |
 +----+----------+-----------------+
@@ -101,17 +104,17 @@ length = enclength >> 8;
 
 A data cell denotes that `length' payload blocks are appended, in natual order,
 after the current metadata block.  A single data cell can specify anywhere
-from zero to 2^24-1 blocks (from zero bytes to (64 GiB - 4096 bytes)).  The
+from zero to 2^24-1 blocks (from zero bytes to (8 GiB - 512 bytes)).  The
 truncated SHA256 of the data fills the rest of the cell.
 
 BACKREF CELL
 ------------
 
-  Op   Pos               Len           Hash
-  0    1  2      6  7    8  9  10 11   12 ...       31
-+----+-----------------+-------------+-----------------+
-| 02 | mm nn ... xx yy | ww xx yy zz | hh hh hh ... hh |
-+----+-----------------+-------------+-----------------+
+  Op   Pos               Len           Zeros
+  0    1  2      6  7    8  9  10 11   12 13 14 15
++----+-----------------+-------------+-------------+
+| 02 | mm nn ... xx yy | ww xx yy zz | 00 00 00 00 |
++----+-----------------+-------------+-------------+
 
 op_backref = 0x02
 
@@ -120,7 +123,7 @@ union {
     struct {
         u64 encpos;
         u32 length;
-        u8 hash[32 - sizeof(length) - sizeof(encpos)]; // 20 bytes of hash
+        u32 zeros;
     };
 }
 
