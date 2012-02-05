@@ -12,11 +12,13 @@
 #include <stdarg.h>
 
 #include <unistd.h>
+#include <sys/uio.h>
+#include <arpa/inet.h>
 
 #include <openssl/sha.h>
 
 #define HASHSZ SHA256_DIGEST_LENGTH
-#define BLOCKSZ 4096
+#define BLOCKSZ 512
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -128,27 +130,159 @@ void insert(struct hashtable *t, off_t off, char *sha)
     t->e[idx] = e;
 }
 
+#define CELLSZ 16
+#define NUMCELL 32
+
+#if CELLSZ * NUMCELL != BLOCKSZ
+# error something wrong with CELLSZ NUMCELL and BLOCKSZ
+#endif
+
 struct undup {
     int fd;
-    SHA256_CTX streamctx;
-    SHA256_CTX blockctx;
-    off_t logoff;       // how many bytes have we represented so far
-    off_t bakstart;     // postiion of start of active backref, or -1 if none
-    off_t baklen;       // length of active backref
+    int curop;
+    SHA256_CTX streamctx; // hash of complete stream
+    SHA256_CTX blockctx;  // hash of current block
+    off_t logoff;         // how many bytes have we represented so far
+    off_t bakstart;       // postiion of start of active backref, or -1 if none
+    off_t baklen;         // length of active backref
+    int cellidx;
+    int iovidx;
+    u8 cells[NUMCELL][CELLSZ];
+    struct iovec iov[NUMCELL];
+};
+
+struct undup_funcs {
+    void (*finalize)(struct undup *);
+};
+
+void und_backref_finalize(struct undup *und);
+void und_data_finalize(struct undup *und);
+
+struct undup_funcs undfuncs[] = {
+    [OP_DATA] = { und_data_finalize },
+    [OP_BACKREF] = { und_backref_finalize },
 };
 
 struct undup *new_undup_stream(int fd)
 {
-    struct undup *und = malloc(sizeof *und);
+    struct undup *und = calloc(sizeof *und, 1);
 
     if (!und) return NULL;
 
     und->fd = fd;
     SHA256_Init(&und->streamctx);
-    und->logoff = 0;
     und->bakstart = -1;
 
     return und;
+}
+
+struct und_trailer {
+    union {
+        u8 op;
+        u64 len;
+    };
+    u8 hash[HASHSZ];
+};
+
+void und_trailer(struct undup *und)
+{
+    int r;
+    struct und_trailer tr;
+
+    SHA256_Final(&und->streamctx, tr.hash);
+    tr.len = htonll(und->logoff);
+    tr.op = OP_TRAILER;
+    r = write(und->fd, &tr, sizeof(tr));
+    if (r == -1)
+        die("write: %s\n", strerror(errno));
+    if (r < sizeof(tr))
+        die("short write on trailer: wrote %d of %d\n", r, (int)sizeof(tr));
+}
+
+
+void und_flush(struct undup *);
+
+void end_undup_stream(struct undup *und)
+{
+    int r;
+
+    und_flush(und);
+    und_trailer(und);
+
+    r = close(und->fd);
+    if (r != 0)
+        die("close: %s\n", strerror(errno));
+}
+
+void und_flush(struct undup *und)
+{
+    int i, numiov;
+    struct iovec iov[NUMCELL + 1];
+    ssize_t r, expected;
+
+    if (und->cellidx == 0)
+        return;
+
+    /*
+     * An incomplete metadata block should be padded with zero-length
+     * op_data cells.
+     */
+    memset(und->cells + und->cellidx, 0, (NUMCELL - und->cellidx) * CELLSZ);
+    for (i = und->cellidx; i < NUMCELL; i++)
+        und->cells[i][0] = OP_BACKREF;
+
+    memcpy(iov + 1, und->iov, und->iovidx);
+    i = und->cellidx;
+    iov[i].iov_base = und->cells;
+    iov[i].iov_len = BLOCKSZ;
+    numiov = und->iovidx + 1;
+
+    expected = BLOCKSZ;
+    for (i=0; i<und->iovidx; i++) {
+        expected += und->iov[i].iov_len;
+    }
+
+    r = writev(und->fd, iov, numiov);
+    if (r == -1)
+        die("write: %s\n", strerror(errno));
+    if (r < expected)
+        die("Short write on output (wrote %lld of %lld)\n", 
+            (long long)r, (long long)expected);
+
+    /* reset for next frame */
+    memset(und->cells, 0, sizeof(und->cells));
+    memset(und->iov, 0, sizeof(und->iov));
+    und->cellidx = 0;
+    und->iovidx = 0;
+
+}
+
+void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
+{
+    int i = und->cellidx++;
+
+    if (cellsz != CELLSZ)
+        die("Botch, %d != %d\n", cellsz, CELLSZ);
+
+    memcpy(und->cells[i], cell, cellsz);
+    if (und->cellidx == NUMCELL) {
+        und_flush_frame(und);
+    }
+}
+
+void und_prep(struct undup *und, int opcode, void *buf, int len)
+{
+    SHA256_Update(&und->streamctx, buf, len);
+    SHA256_Update(&und->blockctx, buf, len);
+    und->logoff += len;
+
+    if (und->curop == opcode)
+        return;
+
+    undfuncs[und->curop].finalize(und);
+    und->curop = opcode;
+
+    SHA256_Init(&und->blockctx);
 }
 
 #define OP_BACKREF 0x02
@@ -159,41 +293,79 @@ struct backref_cell {
         u64 pos;
     };
     u32 len;
-    u8 hash[20];
+    u8 zeros[4];
 };
 
-void finalize_backref(struct undup *und)
+void und_backref_cell(struct undup *und, off_t oldoff,
+                      char *buf, int len, char *sha)
 {
-    struct backref_cell br;
-    char backref[sizeof br];
-    char sha[HASHSZ];
-
-    br->pos = ntohll(und->bakstart);
-    if (br->op != 0) die("unpossible, pos = %lld op = %d\n", br->pos, br->op);
-    br->op = OP_BACKREF;
-    br->len = ntohl(und->baklen);
-
-    SHA256_Final(&und->blockctx, sha);
-}
-
-void und_backref_cell(struct undup *und, off_t oldoff, char *buf, int len, char *sha)
-{
-    SHA256_Update(&und->streamctx, buf, len);
-    und->logoff += len;
+    und_prep(und, OP_BACKREF, buf, len);
 
     if (und->bakstart + und->baklen == oldoff && len == BLOCKSZ) {
         /* extend existing backref */
         und->prevbak += len;
     } else {
         und->prevbak = oldoff + len;
-        SHA256_Init(&und->blockctx);
     }
-    SHA256_Update(&und->blockctx, buf, len);
 }
+
+void und_backref_finalize(struct undup *und)
+{
+    struct backref_cell br;
+    char sha[HASHSZ];
+
+    br->pos = htonll(und->bakstart);
+    if (br->op != 0)
+        die("unpossible, start = %lld pos = 0x%llx op = %d\n",
+            und->bakstart, br->pos, br->op);
+
+    br->op = OP_BACKREF;
+    br->len = htonl(und->baklen);
+
+    SHA256_Final(&und->blockctx, sha);
+    memcpy(br->hash, sha, sizeof(br->hash));
+    und_queue_cell(und, &br, sizeof(br));
+}
+
+#define OP_DATA 0x01
+
+struct data_cell {
+    union {
+        u8 op;
+        u32 len;
+    };
+    u8 hash[12];
+};
 
 void und_data_cell(struct undup *und, char *buf, int len)
 {
+    int i, n;
+    void *p;
 
+    und_prep(und, OP_DATA, buf, len);
+
+    i = und->iovidx;
+    n = und->iov[i].iov_len;
+    p = realloc(und->iov[i].iov_base, n + len);
+    memcpy((u8 *)p + n, buf, len);
+}
+
+void und_data_finalize(struct undup *und)
+{
+    struct data_cell da;
+    char sha[HASHSZ];
+    int numblock = len / BLOCKSZ + !!(len % BLOCKSZ);
+
+    da->len = htonl(numblock);
+    if (da->op != 0)
+        die("unpossible, numblock = %d len = %x op = %d\n",
+            numblock, da->len, da->op);
+    da->op = OP_DATA;
+    SHA256_Final(&und->blockctx, sha);
+    memcpy(da->hash, sha, sizeof(da->hash));
+    und_queue_cell(und, &da, sizeof(da));
+    und->iovidx++;
+}
 
 int main(int argc, char **argv)
 {
@@ -258,7 +430,7 @@ int main(int argc, char **argv)
     if (n == -1)
         die("read: %s\n", strerror(errno));
 
-    finalize_undup_stream(und);
+    end_undup_stream(und);
 
     return 0;
 }
