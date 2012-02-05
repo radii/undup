@@ -57,6 +57,20 @@ void verbose(char *fmt, ...)
     va_end(ap);
 }
 
+void debug(char *fmt, ...)
+{
+    va_list ap;
+    struct timeval tv;
+
+    if (o_verbose < 3) return;
+    gettimeofday(&tv, 0);
+    fprintf(stderr, "[%d.%06d] ", (int)tv.tv_sec, (int)tv.tv_usec);
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
 u64 htonll(u64 x)
 {
     return
@@ -461,6 +475,9 @@ int main(int argc, char **argv)
 
         hash(buf, n, sha);
         oldoff = lookup(table, sha);
+
+        debug("%-8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
+              und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
 
         if (oldoff != (off_t)-1 && n == BLOCKSZ) {
             und_backref_cell(und, oldoff, buf, n, sha);
