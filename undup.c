@@ -75,7 +75,7 @@ void usage(const char *cmd)
     die("Usage: %s [-d] [-o output] [input]\n", cmd);
 }
 
-int hash(const void *buf, int n, void *outbuf)
+void hash(const void *buf, int n, void *outbuf)
 {
     SHA256_CTX c;
 
@@ -160,7 +160,7 @@ struct undup {
     SHA256_CTX streamctx; // hash of complete stream
     SHA256_CTX blockctx;  // hash of current block
     off_t logoff;         // how many bytes have we represented so far
-    off_t bakstart;       // postiion of start of active backref, or -1 if none
+    off_t bakstart;       // position of start of active backref, or -1 if none
     off_t baklen;         // length of active backref
     int cellidx;
     int iovidx;
@@ -245,10 +245,20 @@ void und_trailer(struct undup *und)
 
 void und_trailer_finalize(struct undup *und)
 {
+    /* calling this function means that the stream was finalized twice, which
+     * indicates a bug somewhere.
+     */
     die("Botch: und_trailer_finalize called.\n");
 }
 
-void und_flush(struct undup *);
+void und_flush_frame(struct undup *);
+
+void und_flush(struct undup *und)
+{
+    if (und->cellidx != 0) {
+        und_flush_frame(und);
+    }
+}
 
 void end_undup_stream(struct undup *und)
 {
@@ -262,7 +272,7 @@ void end_undup_stream(struct undup *und)
         die("close: %s\n", strerror(errno));
 }
 
-void und_flush(struct undup *und)
+void und_flush_frame(struct undup *und)
 {
     int i, numiov;
     struct iovec iov[NUMCELL + 1];
@@ -338,18 +348,21 @@ void und_backref_cell(struct undup *und, off_t oldoff,
 {
     und_prep(und, OP_BACKREF, buf, len);
 
-    if (und->bakstart + und->baklen == oldoff && len == BLOCKSZ) {
+    if (und->bakstart != -1 &&
+        und->bakstart + und->baklen == oldoff &&
+        len % BLOCKSZ == 0) {
         /* extend existing backref */
-        und->prevbak += len;
+        und->baklen += len;
     } else {
-        und->prevbak = oldoff + len;
+        und->bakstart = oldoff;
+        und->baklen = len;
     }
 }
 
 void und_backref_finalize(struct undup *und)
 {
     struct backref_cell br;
-    char sha[HASHSZ];
+    u8 sha[HASHSZ];
 
     br.pos = htonll(und->bakstart);
     if (br.op != 0)
@@ -360,7 +373,6 @@ void und_backref_finalize(struct undup *und)
     br.len = htonl(und->baklen);
 
     SHA256_Final(sha, &und->blockctx);
-    memcpy(br.hash, sha, sizeof(br.hash));
     und_queue_cell(und, &br, sizeof(br));
 }
 
@@ -380,7 +392,7 @@ void und_data_cell(struct undup *und, char *buf, int len)
 void und_data_finalize(struct undup *und)
 {
     struct data_cell da;
-    char sha[HASHSZ];
+    u8 sha[HASHSZ];
     int len = und->iov[und->iovidx].iov_len;
     int numblock = len / BLOCKSZ + !!(len % BLOCKSZ);
 
@@ -445,11 +457,12 @@ int main(int argc, char **argv)
 
     while ((n = read(infd, buf, bufsz)) > 0) {
         char sha[HASHSZ];
+        off_t oldoff;
 
         hash(buf, n, sha);
         oldoff = lookup(table, sha);
 
-        if (oldoff != (off_t)-1 && len == BLOCKSZ) {
+        if (oldoff != (off_t)-1 && n == BLOCKSZ) {
             und_backref_cell(und, oldoff, buf, n, sha);
         } else {
             und_data_cell(und, buf, n);
