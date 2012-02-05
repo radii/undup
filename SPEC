@@ -104,8 +104,13 @@ length = enclength >> 8;
 
 A data cell denotes that `length' payload blocks are appended, in natual order,
 after the current metadata block.  A single data cell can specify anywhere
-from zero to 2^24-1 blocks (from zero bytes to (8 GiB - 512 bytes)).  The
-truncated SHA256 of the data fills the rest of the cell.
+from zero to 2^24-1 blocks (from zero bytes to (8 GiB - 512 bytes)).  All
+payload blocks must be complete.  Partial blocks are not allowed, except for
+the last block in the file, which is zero-filled and truncated according to
+the trailer's length field.
+
+The truncated SHA256 of the current data payload fills the rest of the data
+cell.
 
 BACKREF CELL
 ------------
