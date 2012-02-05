@@ -60,7 +60,7 @@ The trailer is 512 bytes.  It starts with the following structure and is
 padded with bytes of value 0x00.
 
   Op   Length     Hash
-  0    1 ..  7
+  0    1 ..  7   8 ..          39
 +----+---------+------------------+
 | ff | 8 bytes | SHA256, 32 bytes |
 +----+---------+------------------+
