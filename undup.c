@@ -298,9 +298,7 @@ void und_flush_frame(struct undup *);
 
 void und_flush(struct undup *und)
 {
-    if (und->cellidx != 0) {
-        und_flush_frame(und);
-    }
+    und_flush_frame(und);
 }
 
 void end_undup_stream(struct undup *und)
@@ -322,7 +320,12 @@ void und_flush_frame(struct undup *und)
     struct iovec iov[NUMCELL + 1];
     ssize_t r, expected;
 
-    if (und->cellidx == 0)
+    debug("flush cell %d iov %d iovlen %lld\n",
+          und->cellidx, und->iovidx, (u64)und->iov[und->iovidx].iov_len);
+
+    if (und->cellidx == 0 &&
+        und->iovidx == 0 &&
+        und->iov[0].iov_len == 0)
         return;
 
     /*
@@ -433,12 +436,14 @@ void und_data_cell(struct undup *und, char *buf, int len)
 
     und_prep(und, OP_DATA, buf, len);
 
-    debug("DATA iovidx %d cellidx %d\n", und->iovidx, und->cellidx);
+    debug("DATA iovidx %d cellidx %d len %lld\n",
+          und->iovidx, und->cellidx, (u64)und->iov[und->iovidx].iov_len);
 
     i = und->iovidx;
     n = und->iov[i].iov_len;
     p = realloc(und->iov[i].iov_base, n + len);
     memcpy((u8 *)p + n, buf, len);
+    und->iov[i].iov_len = n + len;
 }
 
 void und_data_finalize(struct undup *und)
