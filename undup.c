@@ -505,7 +505,7 @@ int main(int argc, char **argv)
         hash(buf, n, sha);
         oldoff = lookup(table, sha);
 
-        debug("%-8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
+        debug("%8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
               und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
 
         if (oldoff != (off_t)-1 && n == BLOCKSZ) {
