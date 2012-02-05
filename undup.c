@@ -334,12 +334,11 @@ void und_flush_frame(struct undup *und)
      */
     memset(und->cells + und->cellidx, 0, (NUMCELL - und->cellidx) * CELLSZ);
     for (i = und->cellidx; i < NUMCELL; i++)
-        und->cells[i][0] = OP_BACKREF;
+        und->cells[i][0] = OP_DATA;
 
     memcpy(iov + 1, und->iov, und->iovidx);
-    i = und->cellidx;
-    iov[i].iov_base = und->cells;
-    iov[i].iov_len = BLOCKSZ;
+    iov[0].iov_base = und->cells;
+    iov[0].iov_len = BLOCKSZ;
     numiov = und->iovidx + 1;
 
     expected = BLOCKSZ;
