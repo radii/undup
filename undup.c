@@ -217,6 +217,11 @@ struct und_trailer {
     u8 hash[HASHSZ];
 };
 
+struct und_header {
+    u32 magic;
+    u32 version;
+    u8 padding[BLOCKSZ - 2 * sizeof(u32)];
+};
 
 struct undup_funcs {
     void (*finalize)(struct undup *);
@@ -242,7 +247,25 @@ struct undup *new_undup_stream(int fd)
     SHA256_Init(&und->streamctx);
     und->bakstart = -1;
 
+    und_header(und);
+
     return und;
+}
+
+void und_header(struct undup *und)
+{
+    int r;
+    struct und_header hd;
+
+    memset(&hd, 0, sizeof(hd));
+    hd.magic = htonl(0x756e6475);
+    hd.version = htonl(1);
+
+    r = write(und->fd, &hd, sizeof(hd));
+    if (r == -1)
+        die("write: %s\n", strerror(errno));
+    if (r != sizeof(hd))
+        die("short write on header: wrote %d of %d\n", r, (int)sizeof(hd));
 }
 
 void und_trailer(struct undup *und)
@@ -320,7 +343,7 @@ void und_flush_frame(struct undup *und)
 
     r = writev(und->fd, iov, numiov);
     if (r == -1)
-        die("write: %s\n", strerror(errno));
+        die("writev: %s\n", strerror(errno));
     if (r < expected)
         die("Short write on output (wrote %lld of %lld)\n", 
             (long long)r, (long long)expected);
