@@ -13,6 +13,8 @@
 #include <string.h>
 #include <errno.h>
 
+#include <assert.h>
+
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/time.h>
@@ -305,6 +307,7 @@ void end_undup_stream(struct undup *und)
 {
     int r;
 
+    debug("end undup len %lld\n", und->logoff);
     und_flush(und);
     und_trailer(und);
 
@@ -363,6 +366,8 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
     if (cellsz != CELLSZ)
         die("Botch, %d != %d\n", cellsz, CELLSZ);
 
+    debug("queue cellidx=%d\n", i);
+
     memcpy(und->cells[i], cell, cellsz);
     if (und->cellidx == NUMCELL) {
         und_flush_frame(und);
@@ -371,6 +376,8 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
 
 void und_prep(struct undup *und, int opcode, void *buf, int len)
 {
+    assert(und->cellidx <= NUMCELL);
+
     SHA256_Update(&und->streamctx, buf, len);
     SHA256_Update(&und->blockctx, buf, len);
     und->logoff += len;
@@ -426,6 +433,8 @@ void und_data_cell(struct undup *und, char *buf, int len)
 
     und_prep(und, OP_DATA, buf, len);
 
+    debug("DATA iovidx %d cellidx %d\n", und->iovidx, und->cellidx);
+
     i = und->iovidx;
     n = und->iov[i].iov_len;
     p = realloc(und->iov[i].iov_base, n + len);
@@ -438,6 +447,9 @@ void und_data_finalize(struct undup *und)
     u8 sha[HASHSZ];
     int len = und->iov[und->iovidx].iov_len;
     int numblock = len / BLOCKSZ + !!(len % BLOCKSZ);
+
+    debug("DATA finalize iovidx %d cellidx %d len %d\n",
+          und->iovidx, und->cellidx, len);
 
     da.len = htonl(numblock);
     if (da.op != 0)
