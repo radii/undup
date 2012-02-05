@@ -10,8 +10,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
+#include <errno.h>
 
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
 
@@ -53,12 +57,25 @@ void verbose(char *fmt, ...)
     va_end(ap);
 }
 
+u64 htonll(u64 x)
+{
+    return
+        (x & 0xffULL) << 56 |
+        (x & 0xff00ULL) << 40 |
+        (x & 0xff0000ULL) << 24 |
+        (x & 0xff000000ULL) << 8 |
+        (x & 0xff00000000ULL) >> 8 |
+        (x & 0xff0000000000ULL) >> 24 |
+        (x & 0xff000000000000ULL) >> 40 |
+        (x & 0xff00000000000000ULL) >> 56;
+}
+
 void usage(const char *cmd)
 {
     die("Usage: %s [-d] [-o output] [input]\n", cmd);
 }
 
-int hash(const char *buf, int n, char *outbuf)
+int hash(const void *buf, int n, void *outbuf)
 {
     SHA256_CTX c;
 
@@ -151,16 +168,50 @@ struct undup {
     struct iovec iov[NUMCELL];
 };
 
+#define OP_DATA 0x01
+
+struct data_cell {
+    union {
+        u8 op;
+        u32 len;
+    };
+    u8 hash[12];
+};
+
+#define OP_BACKREF 0x02
+
+struct backref_cell {
+    union {
+        u8 op;
+        u64 pos;
+    };
+    u32 len;
+    u8 zeros[4];
+};
+
+#define OP_TRAILER 0xff
+
+struct und_trailer {
+    union {
+        u8 op;
+        u64 len;
+    };
+    u8 hash[HASHSZ];
+};
+
+
 struct undup_funcs {
     void (*finalize)(struct undup *);
 };
 
 void und_backref_finalize(struct undup *und);
 void und_data_finalize(struct undup *und);
+void und_trailer_finalize(struct undup *und);
 
 struct undup_funcs undfuncs[] = {
     [OP_DATA] = { und_data_finalize },
     [OP_BACKREF] = { und_backref_finalize },
+    [OP_TRAILER] = { und_trailer_finalize },
 };
 
 struct undup *new_undup_stream(int fd)
@@ -176,29 +227,26 @@ struct undup *new_undup_stream(int fd)
     return und;
 }
 
-struct und_trailer {
-    union {
-        u8 op;
-        u64 len;
-    };
-    u8 hash[HASHSZ];
-};
-
 void und_trailer(struct undup *und)
 {
     int r;
     struct und_trailer tr;
 
-    SHA256_Final(&und->streamctx, tr.hash);
-    tr.len = htonll(und->logoff);
+    SHA256_Final(tr.hash, &und->streamctx);
+    tr.len = htonl(und->logoff);
     tr.op = OP_TRAILER;
     r = write(und->fd, &tr, sizeof(tr));
     if (r == -1)
         die("write: %s\n", strerror(errno));
     if (r < sizeof(tr))
         die("short write on trailer: wrote %d of %d\n", r, (int)sizeof(tr));
+    und->curop = OP_TRAILER;
 }
 
+void und_trailer_finalize(struct undup *und)
+{
+    die("Botch: und_trailer_finalize called.\n");
+}
 
 void und_flush(struct undup *);
 
@@ -285,17 +333,6 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
     SHA256_Init(&und->blockctx);
 }
 
-#define OP_BACKREF 0x02
-
-struct backref_cell {
-    union {
-        u8 op;
-        u64 pos;
-    };
-    u32 len;
-    u8 zeros[4];
-};
-
 void und_backref_cell(struct undup *und, off_t oldoff,
                       char *buf, int len, char *sha)
 {
@@ -314,28 +351,18 @@ void und_backref_finalize(struct undup *und)
     struct backref_cell br;
     char sha[HASHSZ];
 
-    br->pos = htonll(und->bakstart);
-    if (br->op != 0)
+    br.pos = htonll(und->bakstart);
+    if (br.op != 0)
         die("unpossible, start = %lld pos = 0x%llx op = %d\n",
-            und->bakstart, br->pos, br->op);
+            und->bakstart, br.pos, br.op);
 
-    br->op = OP_BACKREF;
-    br->len = htonl(und->baklen);
+    br.op = OP_BACKREF;
+    br.len = htonl(und->baklen);
 
-    SHA256_Final(&und->blockctx, sha);
-    memcpy(br->hash, sha, sizeof(br->hash));
+    SHA256_Final(sha, &und->blockctx);
+    memcpy(br.hash, sha, sizeof(br.hash));
     und_queue_cell(und, &br, sizeof(br));
 }
-
-#define OP_DATA 0x01
-
-struct data_cell {
-    union {
-        u8 op;
-        u32 len;
-    };
-    u8 hash[12];
-};
 
 void und_data_cell(struct undup *und, char *buf, int len)
 {
@@ -354,15 +381,16 @@ void und_data_finalize(struct undup *und)
 {
     struct data_cell da;
     char sha[HASHSZ];
+    int len = und->iov[und->iovidx].iov_len;
     int numblock = len / BLOCKSZ + !!(len % BLOCKSZ);
 
-    da->len = htonl(numblock);
-    if (da->op != 0)
+    da.len = htonl(numblock);
+    if (da.op != 0)
         die("unpossible, numblock = %d len = %x op = %d\n",
-            numblock, da->len, da->op);
-    da->op = OP_DATA;
-    SHA256_Final(&und->blockctx, sha);
-    memcpy(da->hash, sha, sizeof(da->hash));
+            numblock, da.len, da.op);
+    da.op = OP_DATA;
+    SHA256_Final(sha, &und->blockctx);
+    memcpy(da.hash, sha, sizeof(da.hash));
     und_queue_cell(und, &da, sizeof(da));
     und->iovidx++;
 }
