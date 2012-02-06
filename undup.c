@@ -479,14 +479,13 @@ void und_data_finalize(struct undup *und)
     und->iovidx++;
 }
 
+int do_compress(int infd, int outfd);
+int do_decompress(int infd, int outfd);
+
 int main(int argc, char **argv)
 {
-    int c, n;
+    int c;
     int infd, outfd;
-    int bufsz = BLOCKSZ;
-    char *buf;
-    struct hashtable *table = new_hashtable(0);
-    struct undup *und;
 
     while ((c = getopt(argc, argv, "do:v")) != EOF) {
         switch (c) {
@@ -521,6 +520,21 @@ int main(int argc, char **argv)
             die("%s: %s\n", o_output, strerror(errno));
     }
 
+    if (o_decompress) {
+        return do_decompress(infd, outfd);
+    } else {
+        return do_compress(infd, outfd);
+    }
+}
+
+int do_compress(int infd, int outfd)
+{
+    int n;
+    char *buf;
+    struct undup *und;
+    struct hashtable *table = new_hashtable(0);
+    int bufsz = BLOCKSZ;
+
     buf = malloc(bufsz);
     if (!buf) die("malloc(%d): %s\n", bufsz, strerror(errno));
 
@@ -548,5 +562,10 @@ int main(int argc, char **argv)
 
     end_undup_stream(und);
 
+    return 0;
+}
+
+int do_decompress(int infd, int outfd)
+{
     return 0;
 }
