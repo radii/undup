@@ -25,6 +25,7 @@
 
 #define HASHSZ SHA256_DIGEST_LENGTH
 #define BLOCKSZ 512
+#define UNDUP_MAGIC 0x756e6475
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -88,6 +89,11 @@ u64 htonll(u64 x)
     buf[6] = x >> 8;
     buf[7] = x;
     return ret;
+}
+
+u64 ntohll(u64 x)
+{
+    return htonll(x);
 }
 
 void usage(const char *cmd)
@@ -247,7 +253,7 @@ void und_header(struct undup *und)
     struct und_header hd;
 
     memset(&hd, 0, sizeof(hd));
-    hd.magic = htonl(0x756e6475);
+    hd.magic = htonl(UNDUP_MAGIC);
     hd.version = htonl(1);
 
     r = write(und->fd, &hd, sizeof(hd));
@@ -565,7 +571,155 @@ int do_compress(int infd, int outfd)
     return 0;
 }
 
+struct redup {
+    int infd, outfd;
+    off_t logpos;
+};
+
+struct redup_funcs {
+    void (*do_frame)(struct redup *, void *);
+};
+
+void red_frame_data(struct redup *, void *);
+void red_frame_backref(struct redup *, void *);
+void red_frame_trailer(struct redup *, void *);
+
+struct redup_funcs redup_func[] = {
+    [OP_DATA] = { red_frame_data },
+    [OP_BACKREF] = { red_frame_backref },
+    [OP_TRAILER] = { red_frame_trailer },
+};
+
+struct redup *new_redup_stream(int infd, int outfd)
+{
+    struct redup *red = calloc(sizeof *red, 1);
+
+    if (!red) die("Unable to malloc(%d)\n", (int)sizeof *red);
+
+    red->infd = infd;
+    red->outfd = outfd;
+
+    return red;
+}
+
+void end_redup_stream(struct redup *red)
+{
+    close(red->infd);
+    if (close(red->outfd) == -1)
+        die("close: %s\n", strerror(errno));
+}
+
+void red_header(struct redup *red, u8 *p)
+{
+    struct und_header *hd = (void *)p;
+
+    debug("magic %x version %x\n", ntohl(hd->magic), ntohl(hd->version));
+
+    if (ntohl(hd->magic) != UNDUP_MAGIC)
+        die("Bad magic (got %x expected %x)\n", hd->magic, htonl(UNDUP_MAGIC));
+
+    if (ntohl(hd->version) != 1)
+        die("Unsupported version %d\n", ntohl(hd->version));
+}
+
+void red_frame(struct redup *red, u8 *buf)
+{
+    assert(sizeof(redup_func) / sizeof(redup_func[0]) == 256);
+
+    if (!redup_func[buf[0]].do_frame)
+        die("Invalid frame op 0x%02x\n", buf[0]);
+
+    redup_func[buf[0]].do_frame(red, buf);
+}
+
+void red_frame_data(struct redup *red, void *p)
+{
+    struct data_cell *dc = p;
+    int numblk = ntohl(dc->len) & 0xffffff;
+    char *buf = malloc(BLOCKSZ);
+    int i, n;
+
+    if (!buf) die("malloc(%d): %s\n", BLOCKSZ, strerror(errno));
+
+    for (i=0; i<numblk; i++) {
+        if ((n = read(red->infd, buf, BLOCKSZ)) != BLOCKSZ) {
+            if (n == -1)
+                die("read: %s\n", strerror(errno));
+            else
+                die("short read: wanted %d got %d (%d of %d blocks)\n",
+                    BLOCKSZ, n, i, numblk);
+        }
+        if ((n = write(red->outfd, buf, BLOCKSZ)) != BLOCKSZ) {
+            if (n == -1)
+                die("write: %s\n", strerror(errno));
+            else
+                die("short write: wrote %d did %d (%d of %d blocks)\n",
+                    BLOCKSZ, n, i, numblk);
+        }
+        red->logpos += n;
+    }
+    free(buf);
+}
+
+void red_frame_backref(struct redup *red, void *p)
+{
+    struct backref_cell *br = p;
+    off_t oldpos = ntohll(br->pos) & 0xffffffffffff; // XXX lulzmask
+    size_t numblk = ntohl(br->len);
+    char *buf = malloc(BLOCKSZ);
+    int i, n;
+
+    if (!buf) die("malloc(%d): %s\n", BLOCKSZ, strerror(errno));
+
+    if (lseek(red->outfd, oldpos, SEEK_SET) != oldpos)
+        die("lseek(%lld): %s\n", (long long)oldpos, strerror(errno));
+
+    for (i=0; i<numblk; i++) {
+        if ((n = read(red->outfd, buf, BLOCKSZ)) != BLOCKSZ) {
+            if (n == -1)
+                die("read: %s\n", strerror(errno));
+            else
+                die("short read: wanted %d got %d (%d of %d blocks)\n",
+                    BLOCKSZ, n, i, numblk);
+        }
+        if ((n = pwrite(red->outfd, buf, BLOCKSZ, red->logpos)) != BLOCKSZ)
+            die("pwrite(%lld): %s\n", (long long)red->logpos, strerror(errno));
+        red->logpos += BLOCKSZ;
+    }
+}
+
+void red_frame_trailer(struct redup *red, void *p)
+{
+    struct und_trailer *tr = p;
+}
+
 int do_decompress(int infd, int outfd)
 {
+    struct redup *red;
+    u8 *buf, *frame;
+    int n;
+    int bufsz = BLOCKSZ;
+
+    buf = malloc(bufsz);
+    frame = malloc(bufsz);
+    if (!buf || !frame) die("malloc(%d): %s\n", bufsz, strerror(errno));
+
+    red = new_redup_stream(infd, outfd);
+
+    if ((n = read(infd, frame, bufsz)) == -1)
+        die("read: %s\n", strerror(errno));
+
+    red_header(red, frame);
+
+    while ((n = read(infd, buf, bufsz)) > 0) {
+        if (n < bufsz)
+            die("Short read (expected %d got %d)\n", bufsz, n);
+        red_frame(red, buf);
+    }
+    if (n == -1)
+        die("read:%s\n", strerror(errno));
+
+    end_redup_stream(red);
+
     return 0;
 }
