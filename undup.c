@@ -127,7 +127,7 @@ struct hashtable *new_hashtable(int desired)
 
     if (!t) return NULL;
 
-    if (desired < 1) desired = 1023;
+    if (desired < 1) desired = 65537;
 
     t->n = desired;
     t->e = calloc(sizeof *t->e, t->n);
