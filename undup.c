@@ -281,16 +281,17 @@ struct undup *new_undup_stream(int fd)
 void und_trailer(struct undup *und)
 {
     int r;
-    struct und_trailer tr;
+    u8 buf[BLOCKSZ] = { 0 };
+    struct und_trailer *tr = (void *)buf;
 
-    SHA256_Final(tr.hash, &und->streamctx);
-    tr.len = htonl(und->logoff);
-    tr.op = OP_TRAILER;
-    r = write(und->fd, &tr, sizeof(tr));
+    SHA256_Final(tr->hash, &und->streamctx);
+    tr->len = htonl(und->logoff);
+    tr->op = OP_TRAILER;
+    r = write(und->fd, buf, BLOCKSZ);
     if (r == -1)
         die("write: %s\n", strerror(errno));
-    if (r < sizeof(tr))
-        die("short write on trailer: wrote %d of %d\n", r, (int)sizeof(tr));
+    if (r < BLOCKSZ)
+        die("short write on trailer: wrote %d of %d\n", r, BLOCKSZ);
     und->curop = OP_TRAILER;
 }
 
@@ -580,12 +581,12 @@ struct redup {
 };
 
 struct redup_funcs {
-    void (*do_frame)(struct redup *, void *);
+    int (*do_frame)(struct redup *, void *);
 };
 
-void red_frame_data(struct redup *, void *);
-void red_frame_backref(struct redup *, void *);
-void red_frame_trailer(struct redup *, void *);
+int red_frame_data(struct redup *, void *);
+int red_frame_backref(struct redup *, void *);
+int red_frame_trailer(struct redup *, void *);
 
 struct redup_funcs redup_func[] = {
     [OP_DATA] = { red_frame_data },
@@ -630,20 +631,21 @@ void red_header(struct redup *red, u8 *p)
 void red_frame(struct redup *red, u8 *buf)
 {
     int i;
+    int keepon = 1;
 
     assert(sizeof(redup_func) / sizeof(redup_func[0]) == 256);
 
-    for (i=0; i<BLOCKSZ; i += CELLSZ) {
+    for (i=0; keepon && i<BLOCKSZ; i += CELLSZ) {
         debug("%6x op %02x\n", red->logpos, buf[i]);
 
         if (!redup_func[buf[i]].do_frame)
             die("Invalid frame op 0x%02x\n", buf[i]);
 
-        redup_func[buf[i]].do_frame(red, buf + i);
+        keepon = redup_func[buf[i]].do_frame(red, buf + i);
     }
 }
 
-void red_frame_data(struct redup *red, void *p)
+int red_frame_data(struct redup *red, void *p)
 {
     struct data_cell *dc = p;
     int numblk = ntohl(dc->len) & 0xffffff;
@@ -674,9 +676,11 @@ void red_frame_data(struct redup *red, void *p)
         red->logpos += n;
     }
     free(buf);
+
+    return 1;
 }
 
-void red_frame_backref(struct redup *red, void *p)
+int red_frame_backref(struct redup *red, void *p)
 {
     struct backref_cell *br = p;
     off_t oldpos = ntohll(br->pos) & 0xffffffffffff; // XXX lulzmask
@@ -712,19 +716,34 @@ void red_frame_backref(struct redup *red, void *p)
     if (lseek(red->outfd, red->logpos, SEEK_SET) != red->logpos)
         die("lseek(%lld): %s\n", (long long)red->logpos, strerror(errno));
 
+    return 1;
 }
 
-void red_frame_trailer(struct redup *red, void *p)
+char *format_sha(char *buf, u8 *hash)
+{
+    int i;
+
+    for (i=0; i<HASHSZ; i++)
+        sprintf(buf+i*2, "%02x", hash[i]);
+    return buf;
+}
+
+int red_frame_trailer(struct redup *red, void *p)
 {
     struct und_trailer *tr = p;
     off_t len;
     u8 sha[HASHSZ];
+    char a[HASHSZ*2 + 1], b[HASHSZ*2 + 1];
 
     len = ntohll(tr->len) & 0xffffffffffff;
 
     SHA256_Final(sha, &red->streamctx);
     debug("len %llx hash %02x%02x%02x%02x\n",
           len, sha[0], sha[1], sha[2], sha[3]);
+    if (memcmp(tr->hash, sha, HASHSZ) != 0)
+        die("Hash mismatch! %s != %s\n",
+            format_sha(a, sha), format_sha(b, tr->hash));
+    return 0;
 }
 
 int do_decompress(int infd, int outfd)
