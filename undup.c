@@ -189,7 +189,7 @@ struct undup {
     SHA256_CTX blockctx;  // hash of current block
     off_t logoff;         // how many bytes have we represented so far
     off_t bakstart;       // position of start of active backref, or -1 if none
-    off_t baklen;         // length of active backref
+    off_t baklen;         // length of active backref, in BLOCKSZ blocks
     int cellidx;
     int iovidx;
     u8 cells[NUMCELL][CELLSZ];
@@ -417,13 +417,13 @@ void und_backref_cell(struct undup *und, off_t oldoff,
     und_prep(und, OP_BACKREF, buf, len);
 
     if (und->bakstart != -1 &&
-        und->bakstart + und->baklen == oldoff &&
+        und->bakstart + und->baklen * BLOCKSZ == oldoff &&
         len % BLOCKSZ == 0) {
         /* extend existing backref */
-        und->baklen += len;
+        und->baklen += len / BLOCKSZ;
     } else {
         und->bakstart = oldoff;
-        und->baklen = len;
+        und->baklen = len / BLOCKSZ;
     }
 }
 
@@ -574,6 +574,7 @@ int do_compress(int infd, int outfd)
 struct redup {
     int infd, outfd;
     off_t logpos;
+    SHA256_CTX streamctx;
 };
 
 struct redup_funcs {
@@ -598,6 +599,8 @@ struct redup *new_redup_stream(int infd, int outfd)
 
     red->infd = infd;
     red->outfd = outfd;
+
+    SHA256_Init(&red->streamctx);
 
     return red;
 }
@@ -649,6 +652,9 @@ void red_frame_data(struct redup *red, void *p)
                 die("short read: wanted %d got %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
+
+        SHA256_Update(&red->streamctx, buf, BLOCKSZ);
+
         if ((n = write(red->outfd, buf, BLOCKSZ)) != BLOCKSZ) {
             if (n == -1)
                 die("write: %s\n", strerror(errno));
@@ -674,6 +680,8 @@ void red_frame_backref(struct redup *red, void *p)
     if (lseek(red->outfd, oldpos, SEEK_SET) != oldpos)
         die("lseek(%lld): %s\n", (long long)oldpos, strerror(errno));
 
+    debug("backref %d at %llx\n", numblk, oldpos);
+
     for (i=0; i<numblk; i++) {
         if ((n = read(red->outfd, buf, BLOCKSZ)) != BLOCKSZ) {
             if (n == -1)
@@ -682,6 +690,12 @@ void red_frame_backref(struct redup *red, void *p)
                 die("short read: wanted %d got %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
+
+        SHA256_Update(&red->streamctx, buf, BLOCKSZ);
+
+        debug("write buf oldoff %llx newoff %llx\n",
+              oldpos + i * BLOCKSZ, red->logpos);
+
         if ((n = pwrite(red->outfd, buf, BLOCKSZ, red->logpos)) != BLOCKSZ)
             die("pwrite(%lld): %s\n", (long long)red->logpos, strerror(errno));
         red->logpos += BLOCKSZ;
@@ -691,6 +705,12 @@ void red_frame_backref(struct redup *red, void *p)
 void red_frame_trailer(struct redup *red, void *p)
 {
     struct und_trailer *tr = p;
+    off_t len;
+    u8 sha[HASHSZ];
+
+    len = ntohll(tr->len) & 0xffffffffffff;
+
+
 }
 
 int do_decompress(int infd, int outfd)
