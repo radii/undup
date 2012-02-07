@@ -422,6 +422,8 @@ void und_backref_cell(struct undup *und, off_t oldoff,
         /* extend existing backref */
         und->baklen += len / BLOCKSZ;
     } else {
+        if (und->bakstart != -1)
+            und_finalize(und);
         und->bakstart = oldoff;
         und->baklen = len / BLOCKSZ;
     }
@@ -627,12 +629,18 @@ void red_header(struct redup *red, u8 *p)
 
 void red_frame(struct redup *red, u8 *buf)
 {
+    int i;
+
     assert(sizeof(redup_func) / sizeof(redup_func[0]) == 256);
 
-    if (!redup_func[buf[0]].do_frame)
-        die("Invalid frame op 0x%02x\n", buf[0]);
+    for (i=0; i<BLOCKSZ; i += CELLSZ) {
+        debug("%6x op %02x\n", red->logpos, buf[i]);
 
-    redup_func[buf[0]].do_frame(red, buf);
+        if (!redup_func[buf[i]].do_frame)
+            die("Invalid frame op 0x%02x\n", buf[i]);
+
+        redup_func[buf[i]].do_frame(red, buf + i);
+    }
 }
 
 void red_frame_data(struct redup *red, void *p)
@@ -662,6 +670,7 @@ void red_frame_data(struct redup *red, void *p)
                 die("short write: wrote %d did %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
+        debug("%6llx data %d\n", red->logpos, n);
         red->logpos += n;
     }
     free(buf);
@@ -700,6 +709,9 @@ void red_frame_backref(struct redup *red, void *p)
             die("pwrite(%lld): %s\n", (long long)red->logpos, strerror(errno));
         red->logpos += BLOCKSZ;
     }
+    if (lseek(red->outfd, red->logpos, SEEK_SET) != red->logpos)
+        die("lseek(%lld): %s\n", (long long)red->logpos, strerror(errno));
+
 }
 
 void red_frame_trailer(struct redup *red, void *p)
@@ -710,7 +722,9 @@ void red_frame_trailer(struct redup *red, void *p)
 
     len = ntohll(tr->len) & 0xffffffffffff;
 
-
+    SHA256_Final(sha, &red->streamctx);
+    debug("len %llx hash %02x%02x%02x%02x\n",
+          len, sha[0], sha[1], sha[2], sha[3]);
 }
 
 int do_decompress(int infd, int outfd)
