@@ -584,6 +584,7 @@ int do_compress(int infd, int outfd)
 
 struct redup {
     int infd, outfd;
+    off_t inpos;
     off_t logpos;
     SHA256_CTX streamctx;
 };
@@ -670,6 +671,7 @@ int red_frame_data(struct redup *red, void *p)
                 die("short read: wanted %d got %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
+        red->inpos += n;
 
         SHA256_Update(&red->streamctx, buf, BLOCKSZ);
 
@@ -680,7 +682,7 @@ int red_frame_data(struct redup *red, void *p)
                 die("short write: wrote %d did %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
-        debug("%6llx data %d\n", red->logpos, n);
+        debug("%6llx %06llx data %d\n", red->logpos, red->inpos, n);
         red->logpos += n;
     }
     free(buf);
@@ -769,12 +771,14 @@ int do_decompress(int infd, int outfd)
 
     if ((n = read(infd, frame, bufsz)) == -1)
         die("read: %s\n", strerror(errno));
+    red->inpos += n;
 
     red_header(red, frame);
 
     while ((n = read(infd, buf, bufsz)) > 0) {
         if (n < bufsz)
             die("Short read (expected %d got %d)\n", bufsz, n);
+        red->inpos += n;
         red_frame(red, buf);
     }
     if (n == -1)
