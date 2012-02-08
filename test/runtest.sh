@@ -1,19 +1,34 @@
-#!/bin/sh
+#!/bin/bash
 
-set -e
+testdir=`dirname $0`
+
+case "$testdir" in
+/*) ;;
+*) testdir=`pwd`/$testdir ;;
+esac
 
 d=`mktemp -d`
 cd $d
 
-perl -e 'print("a" x 512);
-         print("b" x 512);
-         print("c" x 512);
-         print("a" x 512);
-         print("c" x 512);
-         print("d" x 512);' > foo
+passes=0
+fails=0
 
-set -x
+for t in $testdir/t*[^~]; do
+    printf "_%-40s_" `basename ${t/t/}`_ | sed 's/ /./g; s/_/ /g'
+    sh $t
+    res=$?
+    if [[ $res == 0 ]]; then
+        echo "PASS"
+        ((passes++))
+    else
+        echo "FAIL"
+        ((fails++))
+    fi
+done
 
-undup foo -o foo.undup
-undup -vvvvv -d -o result foo.undup
-cmp foo result
+echo "passed: $passes failed: $fails"
+if [[ $fails == 0 ]]; then
+    exit 0
+else
+    exit 1
+fi

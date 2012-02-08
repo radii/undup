@@ -1,0 +1,12 @@
+rm -f foo foo.undup result
+
+perl -e 'print("a" x 512);
+         print("b" x 512);
+         print("c" x 512);
+         print("a" x 512);
+         print("c" x 512);
+         print("d" x 512);' > foo
+
+undup foo -o foo.undup
+undup -d -o result foo.undup
+cmp foo result
