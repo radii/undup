@@ -1,0 +1,9 @@
+rm -f foo foo.undp result
+
+perl -e 'for($i=ord("b"); $i<ord("z");$i++) {
+            print "a"x512; print chr($i)x512;
+         }' > foo
+
+undup foo -o foo.undp
+undup -d -o result foo.undp
+cmp foo result
