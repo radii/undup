@@ -156,7 +156,7 @@ void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
     e->next = t->e[idx];
     t->e[idx] = e;
 
-    debug("insert idx %d off %llx hash %02c%02c%02c%02c e %p next %p\n",
+    debug("insert idx %d off %llx hash %02x%02x%02x%02x e %p next %p\n",
           idx, off, sha[0], sha[1], sha[2], sha[3], e, e->next);
 }
 
