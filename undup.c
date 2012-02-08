@@ -447,6 +447,9 @@ void und_backref_finalize(struct undup *und)
         die("unpossible, start = %lld pos = 0x%llx op = %d\n",
             und->bakstart, br.pos, br.op);
 
+    /* making a note here, this backref is recorded, huge success */
+    und->bakstart = -1;
+
     br.op = OP_BACKREF;
     br.len = htonl(und->baklen);
 
