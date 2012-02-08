@@ -437,6 +437,7 @@ void und_backref_finalize(struct undup *und)
 
     debug("BACK finalize start %lld\n", und->bakstart);
 
+    memset(&br, 0, sizeof(br));
     br.pos = htonll(und->bakstart);
     if (br.op != 0)
         die("unpossible, start = %lld pos = 0x%llx op = %d\n",
