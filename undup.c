@@ -417,6 +417,9 @@ void und_backref_cell(struct undup *und, off_t oldoff,
 {
     und_prep(und, OP_BACKREF, buf, len);
 
+    debug("BACK iovidx %d cellidx %d len %lld\n",
+          und->iovidx, und->cellidx, (u64)und->iov[und->iovidx].iov_len);
+
     if (und->bakstart != -1 &&
         und->bakstart + und->baklen * BLOCKSZ == oldoff &&
         len % BLOCKSZ == 0) {
@@ -435,7 +438,8 @@ void und_backref_finalize(struct undup *und)
     struct backref_cell br;
     u8 sha[HASHSZ];
 
-    debug("BACK finalize start %lld\n", und->bakstart);
+    debug("BACK finalize start %lld len %lld cellidx %d\n",
+          und->bakstart, und->baklen, und->cellidx);
 
     memset(&br, 0, sizeof(br));
     br.pos = htonll(und->bakstart);
