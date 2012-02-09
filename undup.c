@@ -585,6 +585,7 @@ int do_compress(int infd, int outfd)
 struct redup {
     int infd, outfd;
     off_t inpos;
+    off_t framepos;
     off_t logpos;
     SHA256_CTX streamctx;
 };
@@ -645,7 +646,10 @@ void red_frame(struct redup *red, u8 *buf)
     assert(sizeof(redup_func) / sizeof(redup_func[0]) == 256);
 
     for (i=0; keepon && i<BLOCKSZ; i += CELLSZ) {
-        debug("%6x op %02x\n", red->logpos, buf[i]);
+        debug("%6x %6x %6x op %02x %02x %02x %02x %02x %02x %02x %02x\n",
+              red->logpos, red->inpos, red->framepos + i,
+              buf[i], buf[i+1], buf[i+2], buf[i+3],
+              buf[i+4], buf[i+5], buf[i+6], buf[i+7]);
 
         if (!redup_func[buf[i]].do_frame)
             die("Invalid frame op 0x%02x\n", buf[i]);
@@ -682,7 +686,7 @@ int red_frame_data(struct redup *red, void *p)
                 die("short write: wrote %d did %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
-        debug("%6llx %06llx data %d\n", red->logpos, red->inpos, n);
+        debug("%6llx %06llx data %d %d/%d\n", red->logpos, red->inpos, n, i, numblk);
         red->logpos += n;
     }
     free(buf);
@@ -756,6 +760,20 @@ int red_frame_trailer(struct redup *red, void *p)
     return 0;
 }
 
+void hexdump(FILE *f, void *buf, int n)
+{
+    int i;
+    u8 *p = buf;
+
+    for (i=0; i<n; i++) {
+        if (i % 16 == 0)
+            fprintf(f, "%6x  ", i);
+        fprintf(f, "%02x%s", p[i], i%16 == 15 ? "\n" : i%8 == 7 ? "  " : " ");
+    }
+    if (i % 16 != 0)
+        fprintf(f, "\n");
+}
+
 int do_decompress(int infd, int outfd)
 {
     struct redup *red;
@@ -778,7 +796,10 @@ int do_decompress(int infd, int outfd)
     while ((n = read(infd, buf, bufsz)) > 0) {
         if (n < bufsz)
             die("Short read (expected %d got %d)\n", bufsz, n);
+        red->framepos = red->inpos;
         red->inpos += n;
+        if (o_verbose > 5)
+            hexdump(stderr, buf, bufsz);
         red_frame(red, buf);
     }
     if (n == -1)
