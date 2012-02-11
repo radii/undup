@@ -344,20 +344,30 @@ void und_check(struct undup *und)
     debug("check: logoff %llx cells %d iovs %d\n",
           und->logoff, und->cellidx, und->iovidx);
     for (i=0; i<und->cellidx; i++) {
-        struct data_cell *cell = (void *)und->cells[i];
 
-        if (cell->op != OP_DATA)
-            continue;
+        if (und->cells[i][0] == OP_DATA) {
+            struct data_cell *cell = (void *)und->cells[i];
 
-        len = (ntohl(cell->len) & 0xffffff) * BLOCKSZ;
-        cellsz += len;
-        debug("check: cell %d len %d total 0x%llx\n",
-              i, len, (long long)cellsz);
+            len = (ntohl(cell->len) & 0xffffff) * BLOCKSZ;
+            cellsz += len;
+            debug("check: data %d len %d total 0x%llx\n",
+                  i, len, (long long)cellsz);
+        } else if (und->cells[i][0] == OP_BACKREF) {
+            struct backref_cell *cell = (void *)und->cells[i];
+            off_t pos;
+
+            pos = ntohll(cell->pos) & 0xffffffffffff;
+            len = ntohl(cell->len);
+            debug("check: back %d len %d @ %x total 0x%llx\n",
+                  i, len, pos, (long long)cellsz);
+        }
+
     }
     for (i=0; i<und->iovidx; i++) {
         len = und->iov[i].iov_len;
         iovsz += len;
-        debug("check: iov %d len %d total 0x%llx\n", i, len, (long long)iovsz);
+        debug("check: iov %-2d len %-6d @ %llx total 0x%llx\n",
+              i, len, und->logoff, (long long)iovsz);
     }
     debug("cellsz = %lld iovsz = %lld\n", (long long)cellsz, (long long)iovsz);
     if (cellsz != iovsz)
@@ -471,7 +481,7 @@ void und_backref_finalize(struct undup *und)
     struct backref_cell br;
     u8 sha[HASHSZ];
 
-    debug("BACK finalize start %lld len %lld cellidx %d\n",
+    debug("BACK finalize start %llx len %lld cellidx %d\n",
           und->bakstart, und->baklen, und->cellidx);
 
     memset(&br, 0, sizeof(br));
