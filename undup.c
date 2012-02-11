@@ -190,8 +190,8 @@ struct undup {
     off_t logoff;         // how many bytes have we represented so far
     off_t bakstart;       // position of start of active backref, or -1 if none
     off_t baklen;         // length of active backref, in BLOCKSZ blocks
-    int cellidx;
-    int iovidx;
+    int cellidx;          // index in cells[]
+    int iovidx;           // index in iov[]
     u8 cells[NUMCELL][CELLSZ];
     struct iovec iov[NUMCELL];
 };
