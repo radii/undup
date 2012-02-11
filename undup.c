@@ -393,14 +393,14 @@ void und_flush_frame(struct undup *und)
     numiov = und->iovidx + 1;
 
     expected = BLOCKSZ;
-    for (i=0; i<und->iovidx; i++) {
+    for (i=0; i<numiov; i++) {
         expected += und->iov[i].iov_len;
     }
 
     r = writev(und->fd, iov, numiov);
     if (r == -1)
         die("writev: %s\n", strerror(errno));
-    if (r < expected)
+    if (r != expected)
         die("Short write on output (wrote %lld of %lld)\n", 
             (long long)r, (long long)expected);
 
