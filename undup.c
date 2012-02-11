@@ -393,7 +393,7 @@ void und_flush_frame(struct undup *und)
     numiov = und->iovidx + 2;
 
     expected = BLOCKSZ;
-    for (i=0; i<numiov; i++) {
+    for (i=0; i<und->iovidx+1; i++) {
         expected += und->iov[i].iov_len;
     }
 
