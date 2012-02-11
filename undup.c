@@ -303,9 +303,13 @@ void und_trailer_finalize(struct undup *und)
     die("Botch: und_trailer_finalize called.\n");
 }
 
+#define NELEM(a) (sizeof(a)/sizeof((a)[0]))
+
 void und_finalize(struct undup *und)
 {
-    if (undfuncs[und->curop].finalize) {
+    if (und->curop >= 0 &&
+        und->curop < NELEM(undfuncs) &&
+        undfuncs[und->curop].finalize) {
         undfuncs[und->curop].finalize(und);
     }
 }
@@ -376,7 +380,7 @@ void und_flush_frame(struct undup *und)
     memset(und->iov, 0, sizeof(und->iov));
     und->cellidx = 0;
     und->iovidx = 0;
-
+    und->curop = -1;
 }
 
 void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
