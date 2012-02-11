@@ -367,7 +367,7 @@ void und_check(struct undup *und)
 void und_flush_frame(struct undup *und)
 {
     int i, numiov;
-    struct iovec iov[NUMCELL + 1];
+    struct iovec iov[NUMCELL + 2];
     ssize_t r, expected;
 
     debug("flush cell %d iov %d iovlen %lld\n",
@@ -390,7 +390,7 @@ void und_flush_frame(struct undup *und)
         iov[i+1] = und->iov[i];
     iov[0].iov_base = und->cells;
     iov[0].iov_len = BLOCKSZ;
-    numiov = und->iovidx + 1;
+    numiov = und->iovidx + 2;
 
     expected = BLOCKSZ;
     for (i=0; i<numiov; i++) {
