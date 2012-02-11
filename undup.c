@@ -335,6 +335,35 @@ void end_undup_stream(struct undup *und)
         die("close: %s\n", strerror(errno));
 }
 
+void und_check(struct undup *und)
+{
+    int i;
+    off_t cellsz = 0, iovsz = 0;
+    u32 len;
+
+    debug("check: logoff %llx cells %d iovs %d\n",
+          und->logoff, und->cellidx, und->iovidx);
+    for (i=0; i<und->cellidx; i++) {
+        struct data_cell *cell = (void *)und->cells[i];
+
+        if (cell->op != OP_DATA)
+            continue;
+
+        len = (ntohl(cell->len) & 0xffffff) * BLOCKSZ;
+        cellsz += len;
+        debug("check: cell %d len %d total 0x%llx\n",
+              i, len, (long long)cellsz);
+    }
+    for (i=0; i<und->iovidx; i++) {
+        len = und->iov[i].iov_len;
+        iovsz += len;
+        debug("check: iov %d len %d total 0x%llx\n", i, len, (long long)iovsz);
+    }
+    debug("cellsz = %lld iovsz = %lld\n", (long long)cellsz, (long long)iovsz);
+    if (cellsz != iovsz)
+        die("und_check: size mismatch at %llx\n", (long long)und->logoff);
+}
+
 void und_flush_frame(struct undup *und)
 {
     int i, numiov;
@@ -571,6 +600,8 @@ int do_compress(int infd, int outfd)
 
         debug("%8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
               und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
+
+        und_check(und);
 
         if (oldoff != (off_t)-1 && n == BLOCKSZ) {
             und_backref_cell(und, oldoff, buf, n, sha);
