@@ -434,6 +434,8 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
     memcpy(und->cells[i], cell, cellsz);
     if (und->cellidx == NUMCELL) {
         und_flush_frame(und);
+    } else if (und->iov[und->iovidx].iov_len) {
+        und->iovidx++;
     }
 }
 
@@ -536,7 +538,6 @@ void und_data_finalize(struct undup *und)
     SHA256_Final(sha, &und->blockctx);
     memcpy(da.hash, sha, sizeof(da.hash));
     und_queue_cell(und, &da, sizeof(da));
-    und->iovidx++;
 }
 
 int do_compress(int infd, int outfd);
