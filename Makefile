@@ -1,6 +1,6 @@
 CFLAGS = -O3 -Wall -g
 OBJS = undup.o
-LIBS = -lssl
+LIBS = -lssl -lcrypto
 
 .PHONY: test
 
