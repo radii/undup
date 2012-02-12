@@ -365,7 +365,7 @@ void und_check(struct undup *und)
         }
 
     }
-    for (i=0; i<und->iovidx; i++) {
+    for (i=0; i<und->iovidx+1; i++) {
         len = und->iov[i].iov_len;
         iovsz += len;
         debug("check: iov %-2d len %-6d @ %llx total 0x%llx\n",
