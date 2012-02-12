@@ -503,13 +503,14 @@ void und_backref_finalize(struct undup *und)
         die("unpossible, start = %lld pos = 0x%llx op = %d\n",
             und->bakstart, br.pos, br.op);
 
-    /* making a note here, this backref is recorded, huge success */
-    und->bakstart = -1;
-
     br.op = OP_BACKREF;
     br.len = htonl(und->baklen);
 
     SHA256_Final(sha, &und->blockctx);
+
+    /* making a note here, this backref is recorded, huge success */
+    und->bakstart = -1;
+    und->baklen = 0;
 
     und_queue_cell(und, &br, sizeof(br));
     debug("done finalizing backref start %llx len %lld\n",
