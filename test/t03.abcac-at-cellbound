@@ -12,10 +12,12 @@ perl -e 'for($i=0;$i<15;$i++) {
              print chr($i+0x61) x 512;
              print "a" x 512;
          }
-         print "a" x 512;
+         print "e" x 512;
          print "c" x 512;
          print "b" x 512;
          print "1" x 512;
+         print "2" x 512;
+         print "a" x 512;
          print "d" x 512;' > input
 undup input > input.undp
 undup -d input.undp -o output
