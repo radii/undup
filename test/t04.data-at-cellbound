@@ -1,0 +1,14 @@
+# und_check fails to account for cell[31]'s iov in some
+# circumstances.
+
+perl -e 'for($i=0; $i<15; $i++) {
+             print chr($i+0x61) x 512;
+             print "a" x 512;
+         }
+         print "a" x 512;
+         print "1" x 512;
+         print "2" x 512;
+         ' > input
+undup input > input.undp
+undup -d input.undp -o output
+cmp input output || exit 1
