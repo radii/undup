@@ -1,0 +1,22 @@
+# given the sequence
+#
+# ... a b c a c d e f ...
+# -----------+---------
+#    frame 1 | frame 2
+# -----------+---------
+#
+# revision 68021be8bb7 (and before) fail to correctly record
+# cell 0 of frame 2 with content 'c'.
+
+perl -e 'for($i=0;$i<15;$i++) {
+             print chr($i+0x61) x 512;
+             print "a" x 512;
+         }
+         print "a" x 512;
+         print "c" x 512;
+         print "b" x 512;
+         print "1" x 512;
+         print "d" x 512;' > input
+undup input > input.undp
+undup -d input.undp -o output
+cmp input output || exit 1

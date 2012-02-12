@@ -447,8 +447,11 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
     SHA256_Update(&und->blockctx, buf, len);
     und->logoff += len;
 
-    if (und->curop == opcode)
+    if (und->curop == opcode) {
+        debug("und_prep: logoff %llx done op %d\n",
+              (long long)und->logoff,  opcode);
         return;
+    }
 
     und_finalize(und);
 
