@@ -8,10 +8,12 @@
 # revision 68021be8bb7 (and before) fail to correctly record
 # cell 0 of frame 2 with content 'c'.
 
-perl -e 'for($i=0;$i<15;$i++) {
+perl -e 'for($i=0;$i<14;$i++) {
              print chr($i+0x61) x 512;
              print "a" x 512;
          }
+         print "m" x 512;
+         print "b" x 512;
          print "e" x 512;
          print "c" x 512;
          print "b" x 512;
