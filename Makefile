@@ -12,5 +12,8 @@ undup: $(OBJS)
 test:
 	PATH=`pwd`:$$PATH `pwd`/test/runtest.sh
 
+install: undup
+	cp undup $(HOME)/bin/undup
+
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@

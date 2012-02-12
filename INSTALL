@@ -1,0 +1,11 @@
+DEPENDENCIES
+------------
+
+OpenSSL, for SHA256.
+
+BUILD INSTRUCTIONS
+------------------
+Read the Makefile, it's short.
+
+make && make test
+make install (to install in $HOME/bin)
