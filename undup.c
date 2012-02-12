@@ -312,6 +312,7 @@ void und_finalize(struct undup *und)
         undfuncs[und->curop].finalize) {
         undfuncs[und->curop].finalize(und);
     }
+    assert(und->bakstart == -1 && und->baklen == 0);
 }
 
 void und_flush_frame(struct undup *);
@@ -383,6 +384,8 @@ void und_flush_frame(struct undup *und)
     debug("flush cell %d iov %d iovlen %lld\n",
           und->cellidx, und->iovidx, (u64)und->iov[und->iovidx].iov_len);
 
+    und_check(und);
+
     if (und->cellidx == 0 &&
         und->iovidx == 0 &&
         und->iov[0].iov_len == 0)
@@ -426,16 +429,19 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
 {
     int i = und->cellidx++;
 
+    assert(und->cellidx <= NUMCELL);
+
     if (cellsz != CELLSZ)
         die("Botch, %d != %d\n", cellsz, CELLSZ);
 
-    debug("queue cellidx=%d\n", i);
+    debug("queue cellidx=%d op=%d\n", i, ((u8 *)cell)[0]);
 
     memcpy(und->cells[i], cell, cellsz);
     if (und->cellidx == NUMCELL) {
         und_flush_frame(und);
     } else if (und->iov[und->iovidx].iov_len) {
         und->iovidx++;
+        assert(und->iovidx < NELEM(und->iov));
     }
 }
 
@@ -486,6 +492,8 @@ void und_backref_finalize(struct undup *und)
     struct backref_cell br;
     u8 sha[HASHSZ];
 
+    und_check(und);
+
     debug("BACK finalize start %llx len %lld cellidx %d\n",
           und->bakstart, und->baklen, und->cellidx);
 
@@ -502,7 +510,10 @@ void und_backref_finalize(struct undup *und)
     br.len = htonl(und->baklen);
 
     SHA256_Final(sha, &und->blockctx);
+
     und_queue_cell(und, &br, sizeof(br));
+    debug("done finalizing backref start %llx len %lld\n",
+          ntohll(br.pos) & 0xffffffffffffff, ntohl(br.len));
 }
 
 void und_data_cell(struct undup *und, char *buf, int len)
