@@ -307,6 +307,7 @@ void und_trailer_finalize(struct undup *und)
 
 void und_finalize(struct undup *und)
 {
+    debug("und_finalize curop %d\n", und->curop);
     if (und->curop >= 0 &&
         und->curop < NELEM(undfuncs) &&
         undfuncs[und->curop].finalize) {
@@ -450,7 +451,6 @@ void und_prep(struct undup *und, int opcode, void *buf, int len)
     assert(und->cellidx <= NUMCELL);
 
     SHA256_Update(&und->streamctx, buf, len);
-    SHA256_Update(&und->blockctx, buf, len);
     und->logoff += len;
 
     if (und->curop == opcode) {
@@ -479,9 +479,12 @@ void und_backref_cell(struct undup *und, off_t oldoff,
         len % BLOCKSZ == 0) {
         /* extend existing backref */
         und->baklen += len / BLOCKSZ;
+        SHA256_Update(&und->blockctx, buf, len);
     } else {
-        if (und->bakstart != -1)
+        if (und->bakstart != -1) {
             und_finalize(und);
+            und->curop = OP_BACKREF;
+         }
         und->bakstart = oldoff;
         und->baklen = len / BLOCKSZ;
     }
@@ -491,8 +494,6 @@ void und_backref_finalize(struct undup *und)
 {
     struct backref_cell br;
     u8 sha[HASHSZ];
-
-    und_check(und);
 
     debug("BACK finalize start %llx len %lld cellidx %d\n",
           und->bakstart, und->baklen, und->cellidx);
@@ -513,8 +514,9 @@ void und_backref_finalize(struct undup *und)
     und->baklen = 0;
 
     und_queue_cell(und, &br, sizeof(br));
-    debug("done finalizing backref start %llx len %lld\n",
-          ntohll(br.pos) & 0xffffffffffffff, ntohl(br.len));
+    debug("done finalizing backref start %llx len %lld cellidx %d\n",
+          ntohll(br.pos) & 0xffffffffffffff, ntohl(br.len),
+          und->cellidx);
 }
 
 void und_data_cell(struct undup *und, char *buf, int len)
@@ -523,6 +525,7 @@ void und_data_cell(struct undup *und, char *buf, int len)
     void *p;
 
     und_prep(und, OP_DATA, buf, len);
+    SHA256_Update(&und->blockctx, buf, len);
 
     debug("DATA iovidx %d cellidx %d len %lld\n",
           und->iovidx, und->cellidx, (u64)und->iov[und->iovidx].iov_len);
@@ -626,8 +629,6 @@ int do_compress(int infd, int outfd)
 
         debug("%8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
               und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
-
-        und_check(und);
 
         if (oldoff != (off_t)-1 && n == BLOCKSZ) {
             und_backref_cell(und, oldoff, buf, n, sha);
