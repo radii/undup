@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 
 #include <openssl/sha.h>
 
@@ -189,9 +190,11 @@ off_t lookup_insert(struct hashtable *t, u8 *sha, off_t newoff)
 struct undup {
     int fd;
     int curop;
+    struct timeval starttime;
     SHA256_CTX streamctx; // hash of complete stream
     SHA256_CTX blockctx;  // hash of current block
     off_t logoff;         // how many bytes have we represented so far
+    off_t outpos;         // how many bytes have been written to output
     off_t bakstart;       // position of start of active backref, or -1 if none
     off_t baklen;         // length of active backref, in BLOCKSZ blocks
     int cellidx;          // index in cells[]
@@ -273,6 +276,7 @@ struct undup *new_undup_stream(int fd)
 
     if (!und) return NULL;
 
+    gettimeofday(&und->starttime, 0);
     und->fd = fd;
     SHA256_Init(&und->streamctx);
     und->bakstart = -1;
@@ -331,6 +335,8 @@ void und_flush(struct undup *und)
 void end_undup_stream(struct undup *und)
 {
     int r;
+    struct timeval endtime;
+    double t;
 
     debug("end undup len %lld\n", (long long)und->logoff);
     und_flush(und);
@@ -339,6 +345,18 @@ void end_undup_stream(struct undup *und)
     r = close(und->fd);
     if (r != 0)
         die("close: %s\n", strerror(errno));
+
+    gettimeofday(&endtime, 0);
+    t = endtime.tv_sec - und->starttime.tv_sec +
+        (endtime.tv_usec - und->starttime.tv_usec) / 1e6;
+
+    if (o_verbose >= 1)
+        fprintf(stderr, "%lld MiB -> %lld MiB (%.1f%% saved) in %.2f seconds (%.2f MiB/s)\n",
+                (long long)und->logoff / 1024 / 1024,
+                (long long)und->outpos / 1024 / 1024,
+                100 * (1 - und->outpos * 1. / und->logoff),
+                t, und->logoff / 1024. / 1024 / t);
+
 }
 
 void und_check(struct undup *und)
@@ -421,6 +439,8 @@ void und_flush_frame(struct undup *und)
     if (r != expected)
         die("Short write on output (wrote %lld of %lld)\n", 
             (long long)r, (long long)expected);
+
+    und->outpos += r;
 
     /* reset for next frame */
     memset(und->cells, 0, sizeof(und->cells));
@@ -654,6 +674,7 @@ struct redup {
     off_t inpos;
     off_t framepos;
     off_t logpos;
+    struct timeval starttime;
     SHA256_CTX streamctx;
 };
 
@@ -681,15 +702,29 @@ struct redup *new_redup_stream(int infd, int outfd)
     red->outfd = outfd;
 
     SHA256_Init(&red->streamctx);
+    gettimeofday(&red->starttime, 0);
 
     return red;
 }
 
 void end_redup_stream(struct redup *red)
 {
+    struct timeval endtime;
+    double t;
+
     close(red->infd);
     if (close(red->outfd) == -1)
         die("close: %s\n", strerror(errno));
+    gettimeofday(&endtime, 0);
+
+    t = endtime.tv_sec - red->starttime.tv_sec +
+        (endtime.tv_usec - red->starttime.tv_usec) / 1e6;
+
+    if (o_verbose >= 1)
+        fprintf(stderr, "%lld MiB -> %lld MiB in %.2f seconds (%.2f MiB/s)\n",
+                (long long)red->inpos / 1024 / 1024,
+                (long long)red->logpos / 1024 / 1024,
+                t, red->logpos / 1024. / 1024 / t);
 }
 
 void red_header(struct redup *red, u8 *p)
