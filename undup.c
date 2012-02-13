@@ -35,6 +35,10 @@ int o_decompress = 0;
 char *o_output = NULL, *o_input = NULL;
 int o_verbose = 0;
 
+void die(char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
+void verbose(char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void debug(char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 void die(char *fmt, ...)
 {
     va_list ap;
@@ -157,7 +161,7 @@ void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
     t->e[idx] = e;
 
     debug("insert idx %d off %llx hash %02x%02x%02x%02x e %p next %p\n",
-          idx, off, sha[0], sha[1], sha[2], sha[3], e, e->next);
+          idx, (long long)off, sha[0], sha[1], sha[2], sha[3], e, e->next);
 }
 
 off_t lookup_insert(struct hashtable *t, u8 *sha, off_t newoff)
@@ -328,7 +332,7 @@ void end_undup_stream(struct undup *und)
 {
     int r;
 
-    debug("end undup len %lld\n", und->logoff);
+    debug("end undup len %lld\n", (long long)und->logoff);
     und_flush(und);
     und_trailer(und);
 
@@ -344,7 +348,7 @@ void und_check(struct undup *und)
     u32 len;
 
     debug("check: logoff %llx cells %d iovs %d\n",
-          und->logoff, und->cellidx, und->iovidx);
+          (long long)und->logoff, und->cellidx, und->iovidx);
     for (i=0; i<und->cellidx; i++) {
 
         if (und->cells[i][0] == OP_DATA) {
@@ -360,8 +364,8 @@ void und_check(struct undup *und)
 
             pos = ntohll(cell->pos) & 0xffffffffffff;
             len = ntohl(cell->len);
-            debug("check: back %d len %d @ %x total 0x%llx\n",
-                  i, len, pos, (long long)cellsz);
+            debug("check: back %d len %d @ %llx total 0x%llx\n",
+                  i, len, (long long)pos, (long long)cellsz);
         }
 
     }
@@ -369,7 +373,7 @@ void und_check(struct undup *und)
         len = und->iov[i].iov_len;
         iovsz += len;
         debug("check: iov %-2d len %-6d @ %llx total 0x%llx\n",
-              i, len, und->logoff, (long long)iovsz);
+              i, len, (long long)und->logoff, (long long)iovsz);
     }
     debug("cellsz = %lld iovsz = %lld\n", (long long)cellsz, (long long)iovsz);
     if (cellsz != iovsz)
@@ -433,7 +437,7 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
     assert(und->cellidx <= NUMCELL);
 
     if (cellsz != CELLSZ)
-        die("Botch, %d != %d\n", cellsz, CELLSZ);
+        die("Botch, %d != %d\n", (int)cellsz, CELLSZ);
 
     debug("queue cellidx=%d op=%d\n", i, ((u8 *)cell)[0]);
 
@@ -496,13 +500,13 @@ void und_backref_finalize(struct undup *und)
     u8 sha[HASHSZ];
 
     debug("BACK finalize start %llx len %lld cellidx %d\n",
-          und->bakstart, und->baklen, und->cellidx);
+          (long long)und->bakstart, (long long)und->baklen, und->cellidx);
 
     memset(&br, 0, sizeof(br));
     br.pos = htonll(und->bakstart);
     if (br.op != 0)
         die("unpossible, start = %lld pos = 0x%llx op = %d\n",
-            und->bakstart, br.pos, br.op);
+            (long long)und->bakstart, (long long)br.pos, br.op);
 
     br.op = OP_BACKREF;
     br.len = htonl(und->baklen);
@@ -514,7 +518,7 @@ void und_backref_finalize(struct undup *und)
     und->baklen = 0;
 
     und_queue_cell(und, &br, sizeof(br));
-    debug("done finalizing backref start %llx len %lld cellidx %d\n",
+    debug("done finalizing backref start %llx len %d cellidx %d\n",
           ntohll(br.pos) & 0xffffffffffffff, ntohl(br.len),
           und->cellidx);
 }
@@ -628,7 +632,8 @@ int do_compress(int infd, int outfd)
         oldoff = lookup_insert(table, sha, und->logoff);
 
         debug("%8llx read %d hash %02x%02x%02x%02x oldoff %llx\n",
-              und->logoff, n, sha[0], sha[1], sha[2], sha[3], oldoff);
+              (long long)und->logoff, n,
+              sha[0], sha[1], sha[2], sha[3], (long long)oldoff);
 
         if (oldoff != (off_t)-1 && n == BLOCKSZ) {
             und_backref_cell(und, oldoff, buf, n, sha);
@@ -708,8 +713,9 @@ void red_frame(struct redup *red, u8 *buf)
     assert(sizeof(redup_func) / sizeof(redup_func[0]) == 256);
 
     for (i=0; keepon && i<BLOCKSZ; i += CELLSZ) {
-        debug("%6x %6x %6x op %02x %02x %02x %02x %02x %02x %02x %02x\n",
-              red->logpos, red->inpos, red->framepos + i,
+        debug("%6llx %6llx %6llx op %02x %02x %02x %02x %02x %02x %02x %02x\n",
+              (long long)red->logpos, (long long)red->inpos,
+              (long long)red->framepos + i,
               buf[i], buf[i+1], buf[i+2], buf[i+3],
               buf[i+4], buf[i+5], buf[i+6], buf[i+7]);
 
@@ -748,7 +754,8 @@ int red_frame_data(struct redup *red, void *p)
                 die("short write: wrote %d did %d (%d of %d blocks)\n",
                     BLOCKSZ, n, i, numblk);
         }
-        debug("%6llx %06llx data %d %d/%d\n", red->logpos, red->inpos, n, i, numblk);
+        debug("%6llx %06llx data %d %d/%d\n",
+              (long long)red->logpos, (long long)red->inpos, n, i, numblk);
         red->logpos += n;
     }
     free(buf);
@@ -769,21 +776,21 @@ int red_frame_backref(struct redup *red, void *p)
     if (lseek(red->outfd, oldpos, SEEK_SET) != oldpos)
         die("lseek(%lld): %s\n", (long long)oldpos, strerror(errno));
 
-    debug("backref %d at %llx\n", numblk, oldpos);
+    debug("backref %d at %llx\n", (int)numblk, (long long)oldpos);
 
     for (i=0; i<numblk; i++) {
         if ((n = read(red->outfd, buf, BLOCKSZ)) != BLOCKSZ) {
             if (n == -1)
                 die("read: %s\n", strerror(errno));
             else
-                die("short read: wanted %d got %d (%d of %d blocks)\n",
-                    BLOCKSZ, n, i, numblk);
+                die("short read: wanted %d got %d (%d of %lld blocks)\n",
+                    BLOCKSZ, n, i, (long long)numblk);
         }
 
         SHA256_Update(&red->streamctx, buf, BLOCKSZ);
 
         debug("write buf oldoff %llx newoff %llx\n",
-              oldpos + i * BLOCKSZ, red->logpos);
+              (long long)oldpos + i * BLOCKSZ, (long long)red->logpos);
 
         if ((n = pwrite(red->outfd, buf, BLOCKSZ, red->logpos)) != BLOCKSZ)
             die("pwrite(%lld): %s\n", (long long)red->logpos, strerror(errno));
@@ -815,7 +822,7 @@ int red_frame_trailer(struct redup *red, void *p)
 
     SHA256_Final(sha, &red->streamctx);
     debug("len %llx hash %02x%02x%02x%02x\n",
-          len, sha[0], sha[1], sha[2], sha[3]);
+          (long long)len, sha[0], sha[1], sha[2], sha[3]);
     if (memcmp(tr->hash, sha, HASHSZ) != 0)
         die("Hash mismatch! %s != %s\n",
             format_sha(a, sha), format_sha(b, tr->hash));
