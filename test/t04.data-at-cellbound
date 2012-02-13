@@ -10,5 +10,6 @@ perl -e 'for($i=0; $i<15; $i++) {
          print "2" x 512;
          ' > input
 undup input > input.undp
+rm -f output
 undup -d input.undp -o output
 cmp input output || exit 1
