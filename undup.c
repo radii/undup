@@ -506,6 +506,8 @@ void und_flush_frame(struct undup *und)
 
     /* reset for next frame */
     memset(und->cells, 0, sizeof(und->cells));
+    for (i=0; i < und->iovidx; i++)
+        free(und->iov[i].iov_base);
     memset(und->iov, 0, sizeof(und->iov));
     und->cellidx = 0;
     und->iovidx = 0;
@@ -943,6 +945,7 @@ int red_frame_backref(struct redup *red, void *p)
     }
     if (lseek(red->outfd, red->logpos, SEEK_SET) != red->logpos)
         die("lseek(%lld): %s\n", (long long)red->logpos, strerror(errno));
+    free(buf);
 
     return 1;
 }
