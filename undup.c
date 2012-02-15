@@ -143,13 +143,13 @@ void hash(const void *buf, int n, void *outbuf)
 }
 
 struct hashentry {
-    struct hashentry *next;
     off_t off;
     char hash[HASHSZ];
 };
 
 struct hashtable {
     struct hashentry **e;
+    int *num;
     int n;
 };
 
@@ -163,43 +163,48 @@ struct hashtable *new_hashtable(int desired)
 
     t->n = desired;
     t->e = calloc(sizeof *t->e, t->n);
+    t->num = calloc(sizeof *t->num, t->n);
 
-    if (!t->e)
+    if (!t->e || !t->num)
         goto fail;
 
     return t;
 fail:
+    free(t->e);
+    free(t->num);
     free(t);
     return NULL;
 }
 
 void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
 {
+    struct hashentry *b = realloc(t->e[idx], (1 + t->num[idx]) * sizeof *b);
     struct hashentry *e;
 
-    e = malloc(sizeof *e);
-    if (!e) {
-        verbose("failed to malloc hashentry, off = %lld\n", (long long)off);
+    if (!b) {
+        verbose("failed to realloc hashentry, off = %lld\n", (long long)off);
         return;
     }
+    e = b + t->num[idx];
 
     e->off = off;
     memcpy(e->hash, sha, HASHSZ);
-    e->next = t->e[idx];
-    t->e[idx] = e;
+    t->e[idx] = b;
+    t->num[idx]++;
 
-    debug("insert idx %d off %llx hash %02x%02x%02x%02x e %p next %p\n",
-          idx, (long long)off, sha[0], sha[1], sha[2], sha[3], e, e->next);
+    debug("insert idx %d off %llx hash %02x%02x%02x%02x e %p num %d\n",
+          idx, (long long)off, sha[0], sha[1], sha[2], sha[3], e, t->num[idx]);
 }
 
 off_t lookup_insert(struct hashtable *t, u8 *sha, off_t newoff)
 {
     unsigned int idx = *(unsigned int *)sha % t->n;
-    struct hashentry *e;
+    struct hashentry *e = t->e[idx];
+    int i;
 
     debug("lookup idx %d e %p\n", idx, t->e[idx]);
 
-    for (e = t->e[idx]; e; e = e->next) {
+    for (i = 0; i < t->num[idx]; i++, e = t->e[idx] + i) {
         if (!memcmp(e->hash, sha, HASHSZ))
             return e->off;
     }
@@ -211,24 +216,22 @@ void hash_stats(struct hashtable *t, FILE *f)
 {
     int i;
     int numentries = 0;
-    int maxchain = 0;
+    int maxbucket = 0;
     struct hashentry *e;
     int mb, memused;
 
     for (i=0; i<t->n; i++) {
-        int len = 0;
-        for (e = t->e[i]; e; e = e->next) {
-            len++;
-        }
+        int len = t->num[i];
+
         numentries += len;
-        if (len > maxchain)
-            maxchain = len;
+        if (len > maxbucket)
+            maxbucket = len;
     }
     mb = sizeof(*e) * numentries / 1024 / 1024;
     memused = get_mem_usage(getpid());
-    fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), avg chain %.1f, max chain %d\n",
+    fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), avg bucket %.1f, max bucket %d\n",
             numentries, mb, memused, mb * 100. / memused,
-            numentries * 1. / t->n, maxchain);
+            numentries * 1. / t->n, maxbucket);
 }
 
 #define CELLSZ 16
