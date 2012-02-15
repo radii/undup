@@ -79,6 +79,13 @@ void debug(char *fmt, ...)
     va_end(ap);
 }
 
+double rtc(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    return tv.tv_sec + tv.tv_usec / 1e6;
+}
+
 /* what a crock. */
 u64 htonll(u64 x)
 {
@@ -180,6 +187,26 @@ off_t lookup_insert(struct hashtable *t, u8 *sha, off_t newoff)
     return -1;
 }
 
+void hash_stats(struct hashtable *t, FILE *f)
+{
+    int i;
+    int numentries = 0;
+    int maxchain = 0;
+    struct hashentry *e;
+
+    for (i=0; i<t->n; i++) {
+        int len = 0;
+        for (e = t->e[i]; e; e = e->next) {
+            len++;
+        }
+        numentries += len;
+        if (len > maxchain)
+            maxchain = len;
+    }
+    fprintf(f, "hash: %d entries, avg chain %.1f, max chain %d\n",
+            numentries, numentries * 1. / t->n, maxchain);
+}
+
 #define CELLSZ 16
 #define NUMCELL 32
 
@@ -197,6 +224,10 @@ struct undup {
     off_t outpos;         // how many bytes have been written to output
     off_t bakstart;       // position of start of active backref, or -1 if none
     off_t baklen;         // length of active backref, in BLOCKSZ blocks
+    u64 numcell, numframe; // for statistics
+    u64 datablocks, backblocks; // number of blocks of each, *not* cells
+    u64 datacell, backcell; // number of cells, *not* blocks
+    double start, lastprint; // for statistics
     int cellidx;          // index in cells[]
     int iovidx;           // index in iov[]
     u8 cells[NUMCELL][CELLSZ];
@@ -276,10 +307,11 @@ struct undup *new_undup_stream(int fd)
 
     if (!und) return NULL;
 
-    gettimeofday(&und->starttime, 0);
     und->fd = fd;
     SHA256_Init(&und->streamctx);
     und->bakstart = -1;
+    gettimeofday(&und->starttime, 0);
+    und->start = und->lastprint = rtc();
 
     und_header(und);
 
@@ -351,12 +383,13 @@ void end_undup_stream(struct undup *und)
         (endtime.tv_usec - und->starttime.tv_usec) / 1e6;
 
     if (o_verbose >= 1)
-        fprintf(stderr, "%lld MiB -> %lld MiB (%.1f%% saved) in %.2f seconds (%.2f MiB/s)\n",
+        fprintf(stderr, "%lld MiB -> %lld MiB (%.1f%% saved) in %.2f seconds (%.2f MiB/s) %lld cells %lld frames, %lld bak %lld dat\n",
                 (long long)und->logoff / 1024 / 1024,
                 (long long)und->outpos / 1024 / 1024,
                 100 * (1 - und->outpos * 1. / und->logoff),
-                t, und->logoff / 1024. / 1024 / t);
-
+                t, und->logoff / 1024. / 1024 / t,
+                (long long)und->numcell, (long long)und->numframe,
+                (long long)und->backblocks, (long long)und->datablocks);
 }
 
 void und_check(struct undup *und)
@@ -442,6 +475,8 @@ void und_flush_frame(struct undup *und)
 
     und->outpos += r;
 
+    und->numframe++;
+
     /* reset for next frame */
     memset(und->cells, 0, sizeof(und->cells));
     memset(und->iov, 0, sizeof(und->iov));
@@ -460,6 +495,8 @@ void und_queue_cell(struct undup *und, void *cell, size_t cellsz)
         die("Botch, %d != %d\n", (int)cellsz, CELLSZ);
 
     debug("queue cellidx=%d op=%d\n", i, ((u8 *)cell)[0]);
+
+    und->numcell++;
 
     memcpy(und->cells[i], cell, cellsz);
     if (und->cellidx == NUMCELL) {
@@ -497,6 +534,8 @@ void und_backref_cell(struct undup *und, off_t oldoff,
 
     debug("BACK iovidx %d cellidx %d len %lld\n",
           und->iovidx, und->cellidx, (u64)und->iov[und->iovidx].iov_len);
+
+    und->backblocks++;
 
     if (und->bakstart != -1 &&
         und->bakstart + und->baklen * BLOCKSZ == oldoff &&
@@ -537,6 +576,8 @@ void und_backref_finalize(struct undup *und)
     und->bakstart = -1;
     und->baklen = 0;
 
+    und->backcell++;
+
     und_queue_cell(und, &br, sizeof(br));
     debug("done finalizing backref start %llx len %d cellidx %d\n",
           ntohll(br.pos) & 0xffffffffffffff, ntohl(br.len),
@@ -553,6 +594,8 @@ void und_data_cell(struct undup *und, char *buf, int len)
 
     debug("DATA iovidx %d cellidx %d len %lld\n",
           und->iovidx, und->cellidx, (u64)und->iov[und->iovidx].iov_len);
+
+    und->datablocks++;
 
     i = und->iovidx;
     n = und->iov[i].iov_len;
@@ -579,6 +622,9 @@ void und_data_finalize(struct undup *und)
     da.op = OP_DATA;
     SHA256_Final(sha, &und->blockctx);
     memcpy(da.hash, sha, sizeof(da.hash));
+
+    und->datacell++;
+
     und_queue_cell(und, &da, sizeof(da));
 }
 
@@ -637,12 +683,17 @@ int do_compress(int infd, int outfd)
     struct undup *und;
     struct hashtable *table = new_hashtable(0);
     int bufsz = BLOCKSZ;
+    double t;
+    int do_progress = 0;
 
     buf = malloc(bufsz);
     if (!buf) die("malloc(%d): %s\n", bufsz, strerror(errno));
 
     und = new_undup_stream(outfd);
     if (!und) die("new_undup_stream: %s\n", strerror(errno));
+
+    if (isatty(2) && o_verbose == 1)
+        do_progress = 1;
 
     while ((n = read(infd, buf, bufsz)) > 0) {
         u8 sha[HASHSZ];
@@ -660,9 +711,41 @@ int do_compress(int infd, int outfd)
         } else {
             und_data_cell(und, buf, n);
         }
+        if (do_progress) {
+            t = rtc();
+            if (t > und->lastprint + 1) {
+                u64 numblock = und->backblocks + und->datablocks;
+
+                fprintf(stderr, "\r %lld MiB -> %lld MiB %.1f MiB/s %.1f%% backref %.1f%% data",
+                        (long long)und->logoff / 1024 / 1024,
+                        (long long)und->outpos / 1024 / 1024,
+                        und->logoff / (t - und->start) / 1024 / 1024,
+                        und->backblocks * 100. / numblock,
+                        und->datablocks * 100. / numblock);
+                und->lastprint = t;
+            }
+        }
     }
     if (n == -1)
         die("read: %s\n", strerror(errno));
+
+    if (o_verbose >= 1) {
+        t = rtc();
+        u64 numblock = und->backblocks + und->datablocks;
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Wrote %lld data blocks (%.1f%%) in %lld cells (%d blocks/cell), %lld MiB\n",
+                (long long)und->datablocks,
+                und->datablocks * 100. / numblock,
+                und->datacell, (int)(und->datablocks / und->datacell),
+                (und->datablocks * BLOCKSZ +
+                 und->datacell * CELLSZ) / 1024 / 1024);
+        fprintf(stderr, "      %lld back blocks (%.1f%%) in %lld cells (%d blocks/cell), %lld MiB\n",
+                (long long)und->backblocks,
+                und->backblocks * 100. / numblock,
+                und->backcell, (int)(und->backblocks / und->backcell),
+                und->backcell * CELLSZ / 1024 / 1024 );
+        hash_stats(table, stderr);
+    }
 
     end_undup_stream(und);
 
@@ -721,7 +804,7 @@ void end_redup_stream(struct redup *red)
         (endtime.tv_usec - red->starttime.tv_usec) / 1e6;
 
     if (o_verbose >= 1)
-        fprintf(stderr, "%lld MiB -> %lld MiB in %.2f seconds (%.2f MiB/s)\n",
+        fprintf(stderr, "%lld MiB -> %lld MiB in %.1f seconds (%.1f MiB/s)\n",
                 (long long)red->inpos / 1024 / 1024,
                 (long long)red->logpos / 1024 / 1024,
                 t, red->logpos / 1024. / 1024 / t);
