@@ -86,6 +86,26 @@ double rtc(void)
     return tv.tv_sec + tv.tv_usec / 1e6;
 }
 
+/* returns the memory usage of PID, in MiB */
+u64 get_mem_usage(int pid)
+{
+    char buf[100];
+    FILE *f;
+    int x;
+
+    snprintf(buf, sizeof buf, "/proc/%d/status", pid);
+    if ((f = fopen(buf, "r")) == NULL)
+        return 0;
+
+    while (fgets(buf, sizeof buf, f) != NULL) {
+        if (sscanf(buf, "VmSize: %d", &x) == 1) {
+            break;
+        }
+    }
+    fclose(f);
+    return x / 1024;
+}
+
 /* what a crock. */
 u64 htonll(u64 x)
 {
@@ -193,6 +213,7 @@ void hash_stats(struct hashtable *t, FILE *f)
     int numentries = 0;
     int maxchain = 0;
     struct hashentry *e;
+    int mb, memused;
 
     for (i=0; i<t->n; i++) {
         int len = 0;
@@ -203,8 +224,11 @@ void hash_stats(struct hashtable *t, FILE *f)
         if (len > maxchain)
             maxchain = len;
     }
-    fprintf(f, "hash: %d entries, avg chain %.1f, max chain %d\n",
-            numentries, numentries * 1. / t->n, maxchain);
+    mb = sizeof(*e) * numentries / 1024 / 1024;
+    memused = get_mem_usage(getpid());
+    fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), avg chain %.1f, max chain %d\n",
+            numentries, mb, memused, mb * 100. / memused,
+            numentries * 1. / t->n, maxchain);
 }
 
 #define CELLSZ 16
