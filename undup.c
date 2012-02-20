@@ -151,7 +151,7 @@ struct hashentry {
 struct hashtable {
     struct hashentry **e;
     int *num;
-    size_t maxmem, size;
+    size_t maxmem, size, startmem;
     int n;
     unsigned int cursor;
 };
@@ -176,6 +176,7 @@ struct hashtable *new_hashtable(int desired, size_t maxmb)
     if (maxmb > 0) {
         t->maxmem = maxmb * 1024 * 1024;
     }
+    t->startmem = get_mem_usage(getpid());
 
     if (!t->e || !t->num)
         goto fail;
@@ -251,7 +252,7 @@ void hash_stats(struct hashtable *t, FILE *f)
             maxbucket = len;
     }
     mb = sizeof(*e) * numentries / 1024 / 1024;
-    memused = get_mem_usage(getpid());
+    memused = get_mem_usage(getpid()) - t->startmem;
     fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), avg bucket %.1f, max bucket %d\n",
             numentries, mb, memused, mb * 100. / memused,
             numentries * 1. / t->n, maxbucket);
