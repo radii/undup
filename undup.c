@@ -732,6 +732,23 @@ int main(int argc, char **argv)
     }
 }
 
+void print_progress(struct undup *und, int final)
+{
+    double t = rtc();
+
+    if (final || t > und->lastprint + 1) {
+        u64 numblock = und->backblocks + und->datablocks;
+
+        fprintf(stderr, "\r %lld MiB -> %lld MiB %.1f MiB/s %.1f%% backref %.1f%% data",
+                (long long)und->logoff / 1024 / 1024,
+                (long long)und->outpos / 1024 / 1024,
+                und->logoff / (t - und->start) / 1024 / 1024,
+                und->backblocks * 100. / numblock,
+                und->datablocks * 100. / numblock);
+        und->lastprint = t;
+    }
+}
+
 int do_compress(int infd, int outfd)
 {
     int n;
@@ -739,7 +756,6 @@ int do_compress(int infd, int outfd)
     struct undup *und;
     struct hashtable *table = new_hashtable(0, o_maxmem);
     int bufsz = BLOCKSZ;
-    double t;
     int do_progress = 0;
 
     buf = malloc(bufsz);
@@ -768,26 +784,18 @@ int do_compress(int infd, int outfd)
             und_data_cell(und, buf, n);
         }
         if (do_progress) {
-            t = rtc();
-            if (t > und->lastprint + 1) {
-                u64 numblock = und->backblocks + und->datablocks;
-
-                fprintf(stderr, "\r %lld MiB -> %lld MiB %.1f MiB/s %.1f%% backref %.1f%% data",
-                        (long long)und->logoff / 1024 / 1024,
-                        (long long)und->outpos / 1024 / 1024,
-                        und->logoff / (t - und->start) / 1024 / 1024,
-                        und->backblocks * 100. / numblock,
-                        und->datablocks * 100. / numblock);
-                und->lastprint = t;
-            }
+            print_progress(und, 0);
         }
+    }
+    if (do_progress) {
+        print_progress(und, 1);
     }
     if (n == -1)
         die("read: %s\n", strerror(errno));
 
     if (o_verbose >= 1) {
-        t = rtc();
         u64 numblock = und->backblocks + und->datablocks;
+
         fprintf(stderr, "\n");
         fprintf(stderr, "Wrote %lld data blocks (%.1f%%) in %lld cells (%d blocks/cell), %lld MiB\n",
                 (long long)und->datablocks,
