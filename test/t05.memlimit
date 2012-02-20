@@ -1,0 +1,13 @@
+# exceed memory limit, verify that decompression works right
+
+perl -e 'for($i=0; $i<1000000; $i++) {
+             printf("%512d", $i);
+             print "a" x 512;
+         }
+         ' > input
+rm -f input.undp
+undup -m 1 input -o input.undp || exit 1
+rm -f output
+undup -d input.undp -o output || exit 1
+cmp input output || exit 1
+rm input input.undp output

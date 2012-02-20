@@ -35,6 +35,7 @@ typedef unsigned long long u64;
 int o_decompress = 0;
 char *o_output = NULL, *o_input = NULL;
 int o_verbose = 0;
+u64 o_maxmem = 0;
 
 void die(char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 void verbose(char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -150,10 +151,17 @@ struct hashentry {
 struct hashtable {
     struct hashentry **e;
     int *num;
+    size_t maxmem, size;
     int n;
 };
 
-struct hashtable *new_hashtable(int desired)
+/*
+ * Creates a new hashtable with DESIRED buckets.  If DESIRED == 0 a useful
+ * default size is chosen.  If MAXMB > 0, it sets a limit on the maximum 
+ * memory consumption of the hashtable, measured in megabytes.  When the limit
+ * is reached, previous entries are overwritten.
+ */
+struct hashtable *new_hashtable(int desired, size_t maxmb)
 {
     struct hashtable *t = malloc(sizeof *t);
 
@@ -164,6 +172,9 @@ struct hashtable *new_hashtable(int desired)
     t->n = desired;
     t->e = calloc(sizeof *t->e, t->n);
     t->num = calloc(sizeof *t->num, t->n);
+    if (maxmb > 0) {
+        t->maxmem = maxmb * 1024 * 1024;
+    }
 
     if (!t->e || !t->num)
         goto fail;
@@ -178,19 +189,31 @@ fail:
 
 void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
 {
-    struct hashentry *b = realloc(t->e[idx], (1 + t->num[idx]) * sizeof *b);
+    struct hashentry *b;
     struct hashentry *e;
 
-    if (!b) {
-        verbose("failed to realloc hashentry, off = %lld\n", (long long)off);
-        return;
+    if (t->maxmem && t->size > t->maxmem && t->num[idx]) {
+        /* beyond size limit, pick entry to overwrite */
+        debug("hashsz %d MB limit %d MB overwrite idx %d num %d\n",
+                (int)(t->size / 1024 / 1024), (int)(t->maxmem / 1024 / 1024),
+                idx, t->num[idx]);
+            memmove(t->e[idx], t->e[idx] + 1, sizeof *b * (t->num[idx] - 1));
+            e = t->e[idx] + t->num[idx] - 1;
+    } else {
+        b = realloc(t->e[idx], (1 + t->num[idx]) * sizeof *b);
+        t->size += sizeof *b;
+        if (!b) {
+            verbose("failed to realloc hashentry, off = %lld\n",
+                    (long long)off);
+            return;
+        }
+        e = b + t->num[idx];
+        t->e[idx] = b;
+        t->num[idx]++;
     }
-    e = b + t->num[idx];
 
     e->off = off;
     memcpy(e->hash, sha, HASHSZ);
-    t->e[idx] = b;
-    t->num[idx]++;
 
     debug("insert idx %d off %llx hash %02x%02x%02x%02x e %p num %d\n",
           idx, (long long)off, sha[0], sha[1], sha[2], sha[3], e, t->num[idx]);
@@ -665,10 +688,13 @@ int main(int argc, char **argv)
     int c;
     int infd, outfd;
 
-    while ((c = getopt(argc, argv, "do:v")) != EOF) {
+    while ((c = getopt(argc, argv, "dm:o:v")) != EOF) {
         switch (c) {
             case 'd':
                 o_decompress = 1;
+                break;
+            case 'm':
+                o_maxmem = strtol(optarg, 0, 0);
                 break;
             case 'o':
                 o_output = optarg;
@@ -710,7 +736,7 @@ int do_compress(int infd, int outfd)
     int n;
     char *buf;
     struct undup *und;
-    struct hashtable *table = new_hashtable(0);
+    struct hashtable *table = new_hashtable(0, o_maxmem);
     int bufsz = BLOCKSZ;
     double t;
     int do_progress = 0;
