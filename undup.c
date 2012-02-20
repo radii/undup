@@ -153,6 +153,7 @@ struct hashtable {
     int *num;
     size_t maxmem, size;
     int n;
+    unsigned int cursor;
 };
 
 /*
@@ -192,13 +193,12 @@ void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
     struct hashentry *b;
     struct hashentry *e;
 
-    if (t->maxmem && t->size > t->maxmem && t->num[idx]) {
+    if (t->maxmem && t->size > t->maxmem && t->num[idx] > 1) {
         /* beyond size limit, pick entry to overwrite */
-        debug("hashsz %d MB limit %d MB overwrite idx %d num %d\n",
+        debug("hashsz %d MB limit %d MB overwrite idx %d num %d cursor %u\n",
                 (int)(t->size / 1024 / 1024), (int)(t->maxmem / 1024 / 1024),
-                idx, t->num[idx]);
-            memmove(t->e[idx], t->e[idx] + 1, sizeof *b * (t->num[idx] - 1));
-            e = t->e[idx] + t->num[idx] - 1;
+                idx, t->num[idx], t->cursor);
+        e = t->e[idx] + (t->cursor++ % t->num[idx]);
     } else {
         b = realloc(t->e[idx], (1 + t->num[idx]) * sizeof *b);
         t->size += sizeof *b;
