@@ -163,7 +163,7 @@ struct hashtable {
  */
 struct hashtable *new_hashtable(int desired, size_t maxmb)
 {
-    struct hashtable *t = malloc(sizeof *t);
+    struct hashtable *t = calloc(sizeof *t, 1);
 
     if (!t) return NULL;
 
