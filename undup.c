@@ -189,6 +189,18 @@ fail:
     return NULL;
 }
 
+void destroy_hash(struct hashtable *t)
+{
+    int i;
+
+    for (i=0; i<t->n; i++) {
+        free(t->e[i]);
+    }
+    free(t->e);
+    free(t->num);
+    free(t);
+}
+
 void insert(struct hashtable *t, int idx, off_t off, u8 *sha)
 {
     struct hashentry *b;
@@ -441,6 +453,7 @@ void end_undup_stream(struct undup *und)
                 t, und->logoff / 1024. / 1024 / t,
                 (long long)und->numcell, (long long)und->numframe,
                 (long long)und->backblocks, (long long)und->datablocks);
+    free(und);
 }
 
 void und_check(struct undup *und)
@@ -811,7 +824,10 @@ int do_compress(int infd, int outfd)
         hash_stats(table, stderr);
     }
 
+    free(buf);
+
     end_undup_stream(und);
+    destroy_hash(table);
 
     return 0;
 }
