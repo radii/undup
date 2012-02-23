@@ -17,10 +17,18 @@ xzcat dir.tar.undup.xz | undup -d -o dir.tar; tar xf dir.tar
 SAMPLE RESULTS
 --------------
 
-for r in 3.0 3.1 3.2 3.3-rc1; do
+% for r in 3.0 3.1 3.2 3.3-rc1; do
     git archive --format=tar --prefix=linux-$r/ v$r | tar -C /tmp/linuxes -xf -
 done
-tar -C /tmp -cf linuxes.tar linuxes
+% tar -C /tmp -cf linuxes.tar linuxes
+% du -shc /tmp/linuxes/*
+500M    /tmp/linuxes/linux-3.0
+504M    /tmp/linuxes/linux-3.1
+511M    /tmp/linuxes/linux-3.2
+518M    /tmp/linuxes/linux-3.3-rc1
+2.0G    total
+
+File sizes:
 
 1833635840   linuxes.tar
  937173504   linuxes.tar.undp
@@ -44,9 +52,9 @@ lrzip    10.97
 Timings for undup + compressors on Core i7 L 640 @ 2.13GHz (2.9 GHz Turbo)
 
 First, we time the undup phase.  This consumes a significant amount
-of memory (for undup 0.1, about 1GB of RAM to store hashes for the 1.8 GB
-linuxes.tar) and can be pipelined, but to get the most reproducible
-timing results, we've run each phase separately.
+of memory (for undup 0.2, about 105 MB of RAM to store hashes for the
+1.8 GB linuxes.tar) and can be pipelined, but to get the most
+reproducible timing results, we've run each phase separately.
 
 undup linuxes.tar 47.26s user 4.15s system 97% cpu 52.885 total
 
