@@ -252,22 +252,25 @@ void hash_stats(struct hashtable *t, FILE *f)
 {
     int i;
     int numentries = 0;
-    int maxbucket = 0;
+    int maxbucket, minbucket, len;
     struct hashentry *e;
     int mb, memused;
 
-    for (i=0; i<t->n; i++) {
-        int len = t->num[i];
+    minbucket = maxbucket = t->num[0];
 
+    for (i=0; i<t->n; i++) {
+        len = t->num[i];
         numentries += len;
         if (len > maxbucket)
             maxbucket = len;
+        if (len < minbucket)
+            minbucket = len;
     }
     mb = sizeof(*e) * numentries / 1024 / 1024;
     memused = get_mem_usage(getpid()) - t->startmem;
-    fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), avg bucket %.1f, max bucket %d\n",
+    fprintf(f, "hash: %d entries (%d MiB / %d MiB, %.1f%% VM efficency), bucket min/avg/max %d/%.1f/%d\n",
             numentries, mb, memused, mb * 100. / memused,
-            numentries * 1. / t->n, maxbucket);
+            minbucket, numentries * 1. / t->n, maxbucket);
 }
 
 #define CELLSZ 16
