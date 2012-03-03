@@ -35,7 +35,7 @@ typedef unsigned long long u64;
 int o_decompress = 0;
 char *o_output = NULL, *o_input = NULL;
 int o_verbose = 0;
-u64 o_maxmem = 0;
+long o_maxmem = 0;
 
 void die(char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
 void verbose(char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -107,6 +107,28 @@ u64 get_mem_usage(int pid)
     return x / 1024;
 }
 
+/* return the physical memory size of the machine in MiB */
+u64 get_physical_ram(void)
+{
+    char buf[100], units[5];
+    FILE *f;
+    int x;
+
+    if ((f = fopen("/proc/meminfo", "r")) == NULL)
+        return 0;
+
+    while (fgets(buf, sizeof buf, f) != NULL) {
+        if (sscanf(buf, "MemTotal: %d %4s", &x, units) == 2)
+            break;
+    }
+    fclose(f);
+
+    if (strcmp(units, "kB") != 0)
+        return 0;
+
+    return x / 1024;
+}
+
 /* what a crock. */
 u64 htonll(u64 x)
 {
@@ -162,7 +184,7 @@ struct hashtable {
  * memory consumption of the hashtable, measured in megabytes.  When the limit
  * is reached, previous entries are overwritten.
  */
-struct hashtable *new_hashtable(int desired, size_t maxmb)
+struct hashtable *new_hashtable(int desired, long maxmb)
 {
     struct hashtable *t = calloc(sizeof *t, 1);
 
@@ -716,6 +738,9 @@ int main(int argc, char **argv)
             case 'o':
                 o_output = optarg;
                 break;
+            case 'u':
+                o_maxmem = -1;
+                break;
             case 'v':
                 o_verbose++;
                 break;
@@ -726,6 +751,21 @@ int main(int argc, char **argv)
 
     if (argc > optind) {
         o_input = argv[optind];
+    }
+
+    if (o_maxmem == 0) {
+        /*
+         * by default, limit hash memory consumption to 90% of physical
+         * ram; use -u to use unlimited hash table.
+         */
+        o_maxmem = get_physical_ram() * .9;
+    }
+
+    if (o_maxmem < 1) {
+        debug("Unlimited hash memory.\n");
+    } else {
+        debug("Limiting hash memory to %ld MiB (use -u to override)\n",
+                o_maxmem);
     }
 
     if (o_input == NULL) {
