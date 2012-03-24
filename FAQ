@@ -1,0 +1,10 @@
+Do other block sizes make sense?  (2K, 4K, 8K)?
+
+Larger block sizes offer three potential benefits.  First, they can result in
+lower metadata overhead.  Second, they increase the "reach" of a given
+width bitfield (a 16-bit field counting 512-byte blocks can address 32 MB;
+with 8-kilobyte blocks it can address 512 MB).  Third, for a hash-based
+system like undup, hashing larger blocks results in a lower RAM overhead
+for a given input size.
+
+The downside of larger blocks is that 
